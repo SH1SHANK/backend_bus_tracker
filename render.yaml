@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: bus-telemetry-api
+    runtime: docker
+    plan: starter        # free tier sleeps after idle -> drops telemetry
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: SUPABASE_URL, sync: false }
+      - { key: SUPABASE_SERVICE_ROLE_KEY, sync: false }
+      - { key: DEVICE_JWT_SECRET, sync: false }
+      - { key: SENTRY_DSN, sync: false }
+      - { key: METRICS_TOKEN, sync: false }

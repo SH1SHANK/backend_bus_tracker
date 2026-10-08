@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+import { detectAnomaly } from '../src/services/anomaly.js';
+import { validateTelemetry } from '../src/services/validation.js';
+import { processTelemetry } from '../src/services/processing.js';
+import { hashSecret, verifySecret } from '../src/lib/password.js';
+
+const base = {
+  device_id: 'NITC-BUS-001', seq: 100, timestamp: '2026-10-07T06:40:12Z',
+  latitude: 11.321234, longitude: 75.934567, speed: 18.4, heading: 143.2, accuracy: 4.1,
+};
+const last = { seq: 99, recorded_at: '2026-10-07T06:40:02Z', latitude: 11.3212, longitude: 75.9345 };
+const now = new Date('2026-10-07T06:40:13Z');
+
+describe('validation', () => {
+  it('accepts a good packet', () => expect(validateTelemetry(base, now)).toBeNull());
+  it('rejects future timestamps', () =>
+    expect(validateTelemetry({ ...base, timestamp: '2026-10-07T07:00:00Z' }, now)?.code).toBe('timestamp_in_future'));
+  it('rejects (0,0)', () =>
+    expect(validateTelemetry({ ...base, latitude: 0, longitude: 0 }, now)?.code).toBe('no_gps_fix'));
+  it('rejects outside service area', () =>
+    expect(validateTelemetry({ ...base, latitude: 28.6, longitude: 77.2 }, now)?.code).toBe('outside_service_area'));
+  it('rejects poor accuracy', () =>
+    expect(validateTelemetry({ ...base, accuracy: 250 }, now)?.code).toBe('poor_accuracy'));
+});
+
+describe('anomaly detection', () => {
+  it('ok with no prior state', () => expect(detectAnomaly(base, null).kind).toBe('ok'));
+  it('ok for normal movement', () => expect(detectAnomaly(base, last).kind).toBe('ok'));
+  it('duplicate', () =>
+    expect(detectAnomaly({ ...base, seq: 99, timestamp: last.recorded_at }, last).kind).toBe('duplicate'));
+  it('stale / out of order', () =>
+    expect(detectAnomaly({ ...base, seq: 98, timestamp: '2026-10-07T06:39:50Z' }, last).kind).toBe('stale'));
+  it('gps jump', () =>
+    expect(detectAnomaly({ ...base, latitude: 11.5, longitude: 76.1 }, last).kind).toBe('gps_jump'));
+  it('flags seq reset but accepts', () =>
+    expect(detectAnomaly({ ...base, seq: 3 }, last)).toEqual({ kind: 'ok', seqReset: true }));
+});
+
+describe('processing + password', () => {
+  it('normalises and derives status', () => {
+    const p = processTelemetry({ ...base, speed: 0.3, heading: 360 });
+    expect(p.status).toBe('stationary');
+    expect(p.heading).toBe(0);
+    expect(processTelemetry(base).status).toBe('moving');
+  });
+  it('verifies scrypt hashes', async () => {
+    const h = await hashSecret('correct horse battery');
+    expect(await verifySecret('correct horse battery', h)).toBe(true);
+    expect(await verifySecret('wrong', h)).toBe(false);
+  });
+});
