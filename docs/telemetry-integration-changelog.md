@@ -48,3 +48,26 @@ Verified against Supabase migration `20261014040200_complete_transport_backend_f
 - **Secret Invariant**: Minimum 16 characters enforced across API schemas, database routines, and provisioning scripts.
 - **Identifier Mapping**: `devices.id` is UUID primary key; `devices.device_id` is hardware text ID (e.g. `'NITC-BUS-001'`) used across JWT `sub`, ingestion RPC, `bus_positions`, and `bus_current_state`.
 - **Initial Epoch & Monotonicity**: Devices begin at `current_epoch = 1`. Reboots call reset RPC with `session_id`, resetting state sequence to `0` and ensuring `seq = 1` is strictly accepted.
+
+---
+
+## Phase 1: Telemetry RPC Compatibility
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Files Modified**:
+  - `src/services/processing.ts`
+  - `src/repositories/telemetry.repo.ts`
+  - `src/routes/telemetry.ts`
+  - `test/telemetry.route.test.ts`
+- **What Changed & Why**:
+  - Replaced legacy `ingest_telemetry` RPC call with `ingest_telemetry_packet(...)` accepting 12 parameters (`p_device_id`, `p_seq`, `p_timestamp`, `p_latitude`, `p_longitude`, `p_speed`, `p_heading`, `p_accuracy`, `p_status`, `p_stop_radius_m`, `p_deviation_m`, `p_epoch`).
+  - Removed `p_bus_id` parameter; the bus reference is resolved securely server-side inside PostgreSQL from `devices.bus_id`.
+  - Replaced faulty `result.reason ?? 'device_inactive'` mapping with full result inspection:
+    - Handled idempotent duplicates (`code === 'DUPLICATE_PACKET'`) -> HTTP 200 `{ ok: true, stored: false, reason: 'duplicate' }`.
+    - Handled successful writes (`code === 'SUCCESS'`) -> HTTP 200 `{ ok: true, stored: true, state_updated: true }`.
+    - Mapped authorization rejections (`UNAUTHORIZED_DEVICE`, `INACTIVE_BUS`) -> HTTP 401 Unauthorized.
+    - Mapped sequence/epoch conflicts (`STALE_EPOCH_PACKET`, `UNAUTHORIZED_EPOCH`, `INVALID_SEQUENCE`, `SEQUENCE_REUSE_CONFLICT`, `OUT_OF_ORDER_PACKET`) -> HTTP 409 Conflict.
+    - Mapped spatial/timestamp validation rejections (`COORDINATES_OUT_OF_BOUNDS`, `INVALID_SPEED`, `INVALID_HEADING`, `INVALID_ACCURACY`, `IMPLAUSIBLE_TIMESTAMP`) -> HTTP 422 Unprocessable Entity.
+- **Related Finding**: `DB-001`, `DB-002`.
+- **Tests Updated**:
+  - `test/telemetry.route.test.ts` expanded with tests for duplicate packet handling (200), sequence reuse conflict (409), unauthorized device (401), and out of bounds coordinates (422).

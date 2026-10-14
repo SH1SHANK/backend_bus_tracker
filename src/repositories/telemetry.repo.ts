@@ -5,11 +5,17 @@ import type { NormalisedTelemetry } from '../services/processing.js';
 
 export interface IngestResult {
   ok: boolean;
+  code: string;
+  error?: string;
   reason?: string;
   stored?: boolean;
   state_updated?: boolean;
   bus_id?: string;
   trip_id?: string | null;
+  device_id?: string;
+  epoch?: number;
+  seq?: number;
+  pos_inserted?: boolean;
   events?: unknown[];
 }
 
@@ -29,21 +35,25 @@ export async function getLastState(busId: string): Promise<LastState | null> {
   };
 }
 
-export async function ingestTelemetry(deviceId: string, busId: string, t: NormalisedTelemetry): Promise<IngestResult> {
-  const { data, error } = await supabase.rpc('ingest_telemetry', {
+export async function ingestTelemetry(
+  deviceId: string,
+  _busId: string,
+  t: NormalisedTelemetry,
+): Promise<IngestResult> {
+  const { data, error } = await supabase.rpc('ingest_telemetry_packet', {
     p_device_id: deviceId,
-    p_bus_id: busId,
     p_seq: t.seq,
-    p_recorded_at: t.recordedAt,
+    p_timestamp: t.recordedAt,
     p_latitude: t.latitude,
     p_longitude: t.longitude,
-    p_speed: t.speed,
-    p_heading: t.heading,
-    p_accuracy: t.accuracy,
-    p_status: t.status,
+    p_speed: t.speed ?? null,
+    p_heading: t.heading ?? null,
+    p_accuracy: t.accuracy ?? null,
+    p_status: t.status ?? null,
     p_stop_radius_m: config.telemetry.stopRadiusM,
     p_deviation_m: config.telemetry.routeDeviationM,
+    p_epoch: t.epoch ?? null,
   });
-  if (error) throw new Error(`ingest_telemetry: ${error.message}`);
+  if (error) throw new Error(`ingest_telemetry_packet: ${error.message}`);
   return data as IngestResult;
 }

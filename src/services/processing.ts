@@ -8,23 +8,29 @@ export interface NormalisedTelemetry {
   recordedAt: string;
   latitude: number;
   longitude: number;
-  speed: number;
-  heading: number;
-  accuracy: number;
+  speed: number | null;
+  heading: number | null;
+  accuracy: number | null;
   status: 'moving' | 'stationary';
+  epoch?: number;
 }
 
 /** Step 6: normalise + determine bus state. */
 export function processTelemetry(p: TelemetryInput): NormalisedTelemetry {
-  const speed = round(p.speed, 1);
+  const speed = p.speed != null ? round(p.speed, 1) : null;
+  const heading = p.heading != null ? round(((p.heading % 360) + 360) % 360, 1) : null;
+  const accuracy = p.accuracy != null ? round(p.accuracy, 1) : null;
+  const isMoving = speed != null && speed >= config.telemetry.stationarySpeedKmh;
+
   return {
     seq: p.seq,
     recordedAt: new Date(p.timestamp).toISOString(),
     latitude: round(p.latitude, 6),
     longitude: round(p.longitude, 6),
     speed,
-    heading: round(((p.heading % 360) + 360) % 360, 1),
-    accuracy: round(p.accuracy, 1),
-    status: speed >= config.telemetry.stationarySpeedKmh ? 'moving' : 'stationary',
+    heading,
+    accuracy,
+    status: isMoving ? 'moving' : 'stationary',
+    epoch: (p as any).epoch,
   };
 }
