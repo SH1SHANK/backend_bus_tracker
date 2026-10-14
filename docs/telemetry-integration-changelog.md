@@ -213,3 +213,42 @@ Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACK
   - `npm run test:integration`: 15/15 real database integration tests passing.
   - `npm run typecheck`: 0 compiler diagnostics.
   - `npm run build`: Clean production build.
+
+---
+
+## Phase 7: Render Free Deployment & Hosted Supabase Edge Function E2E Verification
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Hosted Targets**:
+  - Render Service: `https://bus-telemetry-api.onrender.com` (Plan: `free`, Region: `singapore`)
+  - Supabase Project: `fnngudikrvelpuhngtlw` (`https://fnngudikrvelpuhngtlw.supabase.co`)
+  - Edge Function: `telemetry-simulator` (`https://fnngudikrvelpuhngtlw.supabase.co/functions/v1/telemetry-simulator`)
+- **Key Milestones Achieved**:
+  1. **Agent Skills Installation & Catalog Verification**:
+     - Installed all 21 Render compute & infrastructure skills (`render-deploy`, `render-web-services`, `render-env-vars`, etc.) via `npx skills add render-oss/skills`.
+     - Verified Supabase skills (`supabase`, `supabase-postgres-best-practices`) and Supabase/Render MCP tool integrations.
+     - Verified GitHub integration via authenticated GitHub CLI (`gh`) and Git remotes.
+  2. **Render Free Deployment**:
+     - Configured `render.yaml` with `plan: free`.
+     - Deployed Docker-based Fastify API service to Render Free tier (`bus-telemetry-api`).
+     - Provisioned environment secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DEVICE_JWT_SECRET`, `METRICS_TOKEN`, `NODE_ENV=production`.
+     - Verified live health check at `https://bus-telemetry-api.onrender.com/healthz` (HTTP 200 `{"status":"ok"}`).
+  3. **Database Constraint Hotfix (`bus_events_event_type_check`)**:
+     - Discovered that live `bus_events_event_type_check` constraint previously lacked the `'device_sequence_reset'` event type expected by `reset_device_sequence`.
+     - Updated check constraint on `public.bus_events` to include `'device_sequence_reset'`, resolving a 500 error on cold boot session resets.
+  4. **Supabase Edge Function Simulator (`telemetry-simulator`)**:
+     - Authored and deployed `telemetry-simulator` Edge Function to live Supabase project `fnngudikrvelpuhngtlw`.
+     - Automated complete end-to-end telemetry lifecycle testing:
+       - Step 0: Tracker provisioning & verification via `register_tracking_device` RPC (Bcrypt 8-round pgcrypto hash).
+       - Step 1: Cold boot session reset (`POST /api/v1/auth/reset-session`) advancing to fresh authorized epoch.
+       - Step 2: Idempotent session reset retry with duplicate `session_id` returning same epoch with `idempotent_retry: true`.
+       - Step 3: Device authentication (`POST /api/v1/auth/device`) returning 12-hour JWT Bearer token.
+       - Step 4: Initial GPS fix ingestion (Seq 1) returning `stored: true, state_updated: true`.
+       - Step 5: Exact duplicate retry idempotency returning `stored: false, state_updated: false, reason: "duplicate"`.
+       - Step 6: Monotonic advancing telemetry fix (Seq 2) along NITC campus road corridor returning `stored: true, state_updated: true`.
+       - Step 7: Conflicting sequence reuse detection (Seq 2 reuse with modified metrics) returning HTTP 409 `SEQUENCE_REUSE_CONFLICT`.
+       - Step 8: Database canonical state verification querying live PostgreSQL tables (`bus_current_state` and `bus_positions`).
+  5. **Verification Result**:
+     - Edge Function E2E Suite: **ALL 9 STEPS PASSED** (`"status": "ALL_TESTS_PASSED"`).
+     - Live Cloud Telemetry Gateway & Supabase Database verified end-to-end with zero errors.
+

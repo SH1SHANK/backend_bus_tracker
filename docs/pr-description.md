@@ -49,7 +49,8 @@ Direct read-only inspection of the PostgreSQL system catalog (`pg_proc` and `inf
 | **Phase 5** | `d50797f` | `test: add comprehensive auth, readiness, and telemetry test coverage` | Added `test/auth.route.test.ts`, verified 35/35 tests passing across 4 suites, verified clean `npm run build`. |
 | **Hardening** | `f2c35d1` | `fix: enforce mandatory epoch/session_id and dynamic device revocation` | Made `epoch` and `session_id` strictly required, added dynamic `is_active` check in auth plugin, 38/38 tests passing. |
 | **Response & Protocols** | `08da6a4` | `fix: preserve stored/state_updated flags and document ESP32 protocol` | Returned exact `stored` and `state_updated` booleans from DB RPC in all branches; documented Render proxy trust and ESP32 reboot protocol. |
-| **Phase 6** | *(current)* | `test: add Fastify-to-Supabase integration suite and architecture docs` | Fixed Bcrypt `$2a$` prefix compatibility with `pgcrypto`; added bidirectional Bcrypt tests (Node <-> Postgres); verified proxy anti-spoofing; resolved `new_epoch` reset mapping; added 15 real Fastify-to-Supabase integration tests; authored complete architecture and protocol documentation. |
+| **Phase 6** | `4125c2f` | `test: add Fastify-to-Supabase integration suite and architecture docs` | Fixed Bcrypt `$2a$` prefix compatibility with `pgcrypto`; added bidirectional Bcrypt tests (Node <-> Postgres); verified proxy anti-spoofing; resolved `new_epoch` reset mapping; added 15 real Fastify-to-Supabase integration tests; authored complete architecture and protocol documentation. |
+| **Phase 7** | `d5a1afb` | `deploy: Render Free & hosted Supabase Edge Function E2E verification` | Configured `render.yaml` with `plan: free`, deployed to Render Free (`https://bus-telemetry-api.onrender.com`), hotfixed database `bus_events_event_type_check` constraint, deployed `telemetry-simulator` Edge Function, and verified 9/9 hosted E2E tests passing. |
 
 ---
 
