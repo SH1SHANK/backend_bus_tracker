@@ -49,7 +49,7 @@ Direct read-only inspection of the PostgreSQL system catalog (`pg_proc` and `inf
 | **Phase 5** | `d50797f` | `test: add comprehensive auth, readiness, and telemetry test coverage` | Added `test/auth.route.test.ts`, verified 35/35 tests passing across 4 suites, verified clean `npm run build`. |
 | **Hardening** | `f2c35d1` | `fix: enforce mandatory epoch/session_id and dynamic device revocation` | Made `epoch` and `session_id` strictly required, added dynamic `is_active` check in auth plugin, 38/38 tests passing. |
 | **Response & Protocols** | `08da6a4` | `fix: preserve stored/state_updated flags and document ESP32 protocol` | Returned exact `stored` and `state_updated` booleans from DB RPC in all branches; documented Render proxy trust and ESP32 reboot protocol. |
-| **Phase 6** | *(current)* | `test: add Fastify-to-Supabase integration suite and architecture docs` | Fixed Bcrypt `$2a$` prefix compatibility with `pgcrypto`; resolved `new_epoch` reset mapping; added 14 real Fastify-to-Supabase integration tests; authored complete architecture and protocol documentation. |
+| **Phase 6** | *(current)* | `test: add Fastify-to-Supabase integration suite and architecture docs` | Fixed Bcrypt `$2a$` prefix compatibility with `pgcrypto`; added bidirectional Bcrypt tests (Node <-> Postgres); verified proxy anti-spoofing; resolved `new_epoch` reset mapping; added 15 real Fastify-to-Supabase integration tests; authored complete architecture and protocol documentation. |
 
 ---
 
@@ -58,8 +58,11 @@ Direct read-only inspection of the PostgreSQL system catalog (`pg_proc` and `inf
 ### 1. Real Fastify-to-Supabase Database Integration Test Suite (`npm run test:integration`)
 *Executed via HTTP injection through the actual Fastify application into local Supabase PostgreSQL (`http://127.0.0.1:54321`).*
 ```
-✓ test/integration/supabase.integration.test.ts (14 tests)
-  ✓ A. Provisioning & Authentication (2 tests)
+✓ test/integration/supabase.integration.test.ts (15 tests)
+  ✓ A. Provisioning & Authentication (Bidirectional Bcrypt) (3 tests)
+    ✓ authenticates device with Node.js-generated Bcrypt hash (Direction 1: Node -> Fastify)
+    ✓ authenticates device with PostgreSQL pgcrypto-generated hash (Direction 2: PostgreSQL -> Fastify)
+    ✓ rejects invalid secret with HTTP 401
   ✓ B. Session Reset & Idempotency (2 tests)
   ✓ C. Successful Telemetry Ingestion (1 test)
   ✓ D. Exact Duplicate Retry Idempotency (1 test)
@@ -68,11 +71,12 @@ Direct read-only inspection of the PostgreSQL system catalog (`pg_proc` and `inf
   ✓ G. Dynamic Device Revocation (1 test)
   ✓ H. Validation and Boundary Invariants (3 tests)
   ✓ I. Concurrency Safety under Database Locks (1 test)
-  ✓ J. Realtime Publication Enrollment (1 test)
+  ✓ J. Realtime Publication Enrollment & Canonical State (1 test)
+    ✓ verifies bus_current_state persistence and active position RPC reads (distinguished from live WebSocket delivery)
 
 Test Files  1 passed (1)
-Tests       14 passed (14)
-Duration    722ms
+Tests       15 passed (15)
+Duration    686ms
 ```
 
 ### 2. Isolated Database SQL Test Suite (`telemetry_ingestion_test.sql`)
@@ -98,34 +102,22 @@ Executed directly against isolated local Supabase PostgreSQL (`supabase_db_NITC_
   - Test 17: Pre-existing legacy data upgrade with sequence collisions.
 
 ### 3. Automated Unit and Route Test Suite (`npm test`)
-*Note: The following 40 tests verify application logic, validation schemas, security headers, and route error mapping using isolated mocks.*
+*Note: The following 41 tests verify application logic, validation schemas, security headers, bidirectional Bcrypt compatibility, and proxy anti-spoofing using isolated mocks.*
 ```
 ✓ test/core.test.ts (14 tests)
 ✓ test/reset_session.test.ts (6 tests)
 ✓ test/telemetry.route.test.ts (13 tests)
-✓ test/security.test.ts (2 tests)
+✓ test/security.test.ts (3 tests)
 ✓ test/auth.route.test.ts (5 tests)
 
 Test Files  5 passed (5)
-Tests       40 passed (40)
+Tests       41 passed (41)
 Duration    617ms
 ```
 
-### 4. TypeScript Compilation Check (`npm run typecheck`)
-```
-> bus-telemetry-api@1.0.0 typecheck
-> tsc -p tsconfig.json
-
-Exit code: 0 (Zero compiler errors)
-```
-
-### 4. Production Build (`npm run build`)
-```
-> bus-telemetry-api@1.0.0 build
-> tsc -p tsconfig.build.json
-
-Exit code: 0 (Clean output to dist/)
-```
+### 4. TypeScript Compilation & Production Build
+- **Typecheck (`npm run typecheck`)**: Exit code 0 (Zero compiler errors).
+- **Build (`npm run build`)**: Exit code 0 (Clean output to `dist/`).
 
 ### 5. Configured Stop Radius and Route Deviation Alignment
 `src/config.ts` configures:
@@ -133,15 +125,21 @@ Exit code: 0 (Clean output to dist/)
 - `routeDeviationM: num('ROUTE_DEVIATION_M', 500)`
 These match the PostgreSQL RPC parameter defaults: `p_stop_radius_m double precision DEFAULT 50.0`, `p_deviation_m double precision DEFAULT 500.0`.
 
-### 6. Render Proxy Trust Verification
-Render terminates external HTTPS traffic and proxies requests internally via `10.x.x.x` private addresses. By configuring `trustProxy: config.trustedProxies` with RFC1918 subnets (`127.0.0.1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16`), Fastify only trusts proxy headers from internal load balancers, preventing public clients from spoofing `X-Forwarded-For`.
+### 6. Reverse Proxy Trust & Anti-Spoofing Verification
+In `test/security.test.ts`, Fastify's proxy trust is verified against IP-spoofing vectors:
+1. **Direct Untrusted Sockets**: When a public client connects directly (`remoteAddress: 203.0.113.1`), Fastify ignores any injected `X-Forwarded-For: 1.2.3.4` header and attributes the connection to `203.0.113.1`.
+2. **Multi-Hop Proxy Chains**: When a request arrives via a trusted private proxy (`remoteAddress: 10.0.0.1`) with `X-Forwarded-For: 1.2.3.4, 203.0.113.50`, Fastify halts trust traversal at the first untrusted upstream hop (`203.0.113.50`), never trusting the preceding spoofed IP (`1.2.3.4`).
+3. **Authenticated Route Immunity**: Rate limits on `/api/v1/telemetry` key on `req.user.sub` (device identifier), completely immunizing ingestion rate limits against IP-hopping evasion.
 
-### 7. Known Limitation: Sequential Trip Completion
-In `src/routes/trips.ts`, `/trips/:id/end` performs sequential REST updates:
-1. Updates `trips` (`status = 'completed', ended_at = ...`)
-2. Inserts `bus_events` (`event_type = 'trip_ended'`)
-3. Updates `bus_current_state` (`trip_id = null`)
-These calls are sequential, not a single database transaction. If the Node process terminates between calls, `trip` is completed but `bus_current_state.trip_id` may remain populated until cleared by the next incoming telemetry packet. An atomic `end_bus_trip` RPC should be added in a future database migration.
+### 7. Known Operational Limitations & Verification Boundaries
+1. **Realtime WebSocket Delivery Scope**:
+   - **Verified**: Database-side CDC publication membership (`bus_current_state` enrolled in `supabase_realtime`) and instantaneous canonical row persistence via `ingest_telemetry_packet` are verified.
+   - **Limitation / Flutter Responsibility**: We did **not** connect an active WebSocket client to verify real-time event streaming across the network. Live WebSocket delivery is an out-of-process client integration responsibility and must be validated through the Flutter mobile app test suite.
+2. **Render Cloud Ingress Topology**:
+   - **Verified**: Fastify software CIDR validation and proxy anti-spoofing behavior are verified in automated tests.
+   - **Limitation**: The physical Render production deployment topology (e.g., whether Render assigns specific non-RFC1918 gateway IPs or whether an upstream CDN/Cloudflare is active) has not been inspected in the cloud and must be confirmed during staging deployment.
+3. **Sequential Trip Completion**:
+   - **Limitation**: In `src/routes/trips.ts`, `/trips/:id/end` performs sequential REST updates (`trips` update -> `Promise.all([bus_events, bus_current_state])`) rather than an atomic database transaction. If the Node process terminates between calls, `trip` is marked completed while `bus_current_state.trip_id` may remain populated until cleared by the next incoming telemetry packet. An atomic `end_bus_trip` RPC should be added in a future database migration.
 
 ### 8. ESP32 Hardware Boot & Ingestion Protocol
 1. **Boot / Reboot**:
@@ -159,11 +157,16 @@ These calls are sequential, not a single database transaction. If the Node proce
 ## Reviewer Checklist
 - [x] Verified exact PostgreSQL types from live `pg_proc` (`p_device_id text`, `p_epoch bigint DEFAULT NULL`, `stop_radius 50.0`, `deviation 500.0`).
 - [x] Zero legacy fallbacks or dual-algorithm checks introduced.
+- [x] Standardized cleanly on Bcrypt with 8 salt rounds (`$2a$08$...`).
+- [x] Bcrypt compatibility verified in **both directions** by regression tests (Node -> Postgres and Postgres -> Node).
 - [x] 16-character minimum secret length enforced across API schemas and scripts.
 - [x] `session_id` mandatory for reboot resets to guarantee idempotency.
 - [x] `epoch` mandatory for telemetry packets under zero-legacy rules.
 - [x] Deactivated devices rejected even with valid 12-hour JWT.
-- [x] Database integration tests (18/18 suites) run and passed in isolated Supabase environment.
+- [x] Database integration tests (18/18 SQL suites + 15/15 Fastify-to-DB suites) run and passed in isolated Supabase environment.
 - [x] Telemetry responses preserve actual `stored` and `state_updated` values.
-- [x] Production build and test suite pass with zero errors.
+- [x] Proxy anti-spoofing regression tests verify direct and multi-hop trust boundaries.
+- [x] Realtime CDC table publication verified, and live WebSocket client streaming clearly distinguished as client responsibility.
+- [x] Unresolved operational limitations (sequential trip completion, Render ingress topology, live WebSocket delivery) honestly documented.
+- [x] Production build and test suites pass with zero errors.
 - [x] No production mutations, DDL, or data changes executed.

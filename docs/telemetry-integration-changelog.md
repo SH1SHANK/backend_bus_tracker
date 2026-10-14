@@ -184,10 +184,12 @@ Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACK
   - `docs/telemetry-integration-changelog.md`
   - `docs/pr-description.md`
 - **What Changed & Why**:
-  - **Critical Bcrypt Prefix Alignment ($2a$ vs $2b$)**: Discovered during real database integration testing that `bcryptjs.hash()` outputs `$2b$08$...` by default. PostgreSQL `pgcrypto` `crypt()` only recognizes the `$2a$` prefix and fails verification when comparing `$2b$` hashes. Updated `src/lib/password.ts` to replace `^\$2b\$` with `$2a$`, establishing 100% bidirectional cryptographic compatibility between Node.js and PostgreSQL.
+  - **Bidirectional Bcrypt Compatibility ($2a$ vs $2b$)**: Discovered that `bcryptjs.hash()` outputs `$2b$08$...` by default. PostgreSQL `pgcrypto` `crypt()` only recognizes the `$2a$` prefix and fails verification when comparing `$2b$` hashes. Updated `src/lib/password.ts` to replace `^\$2b\$` with `$2a$`. Added regression tests verifying compatibility in **both directions**:
+    - *Direction 1 (Node -> Postgres)*: Node.js `hashSecret()` outputs `$2a$08$...` and is verifiable by both Node `verifySecret()` and PostgreSQL `pgcrypto` `crypt()`.
+    - *Direction 2 (Postgres -> Node)*: PostgreSQL `register_tracking_device` RPC hashes the secret using `pgcrypto` `crypt(..., gen_salt('bf', 8))`. Fastify Node `verifySecret()` correctly authenticates the device and issues a JWT.
   - **Reset Epoch Field Reconciliation**: Resolved epoch return value in `src/routes/auth.ts` from `Number(data.epoch ?? data.new_epoch)`. `reset_device_sequence` returns `new_epoch` on fresh advance and `epoch` on idempotent retry.
-  - **Real Fastify-to-Supabase Integration Suite**: Implemented `test/integration/supabase.integration.test.ts` running real HTTP requests against local Supabase containers (`http://127.0.0.1:54321`), covering:
-    - Scenario A: Device provisioning & authentication.
+  - **Real Fastify-to-Supabase Integration Suite**: Implemented `test/integration/supabase.integration.test.ts` running real HTTP requests against local Supabase containers (`http://127.0.0.1:54321`), covering 15 scenarios:
+    - Scenario A: Device provisioning & authentication (both Direction 1 Node hash and Direction 2 PostgreSQL hash).
     - Scenario B: Session reset & idempotent retry with same `session_id`.
     - Scenario C: Successful telemetry persistence in `bus_positions` & `bus_current_state`.
     - Scenario D: Exact duplicate retry idempotency without extra history rows.
@@ -196,11 +198,18 @@ Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACK
     - Scenario G: Dynamic device revocation blocking.
     - Scenario H: Validation boundary invariants (NITC corridor 422, future skew 422, nullable GNSS fields 200).
     - Scenario I: Concurrency safety under advisory locks (5 concurrent packets processed safely).
-    - Scenario J: Realtime publication enrollment verification.
-  - **Proxy Trust & Security Testing**: Added `test/security.test.ts` validating client IP resolution through trusted proxies and verifying rate limits key on `req.user.sub` for authenticated devices.
+    - Scenario J: Realtime publication enrollment verification & canonical state persistence (distinguished from live WebSocket delivery).
+  - **Proxy Anti-Spoofing & Security Testing**: Expanded `test/security.test.ts` to verify:
+    - Direct untrusted public connections (`remoteAddress: 203.0.113.1`) attempting to spoof `X-Forwarded-For: 1.2.3.4` are ignored; Fastify correctly assigns `req.ip = 203.0.113.1`.
+    - Connections through trusted private proxies (`remoteAddress: 10.0.0.1`) halt at the first untrusted upstream hop (`203.0.113.50`), never trusting spoofed preceding IPs (`1.2.3.4`).
+    - Authenticated telemetry rate limiting keys on `req.user.sub` (device identifier), preventing IP-spoofing evasion.
   - **Architecture & System Documentation**: Added comprehensive, standalone engineering documentation (`docs/backend-architecture.md`, `docs/telemetry-protocol.md`, `docs/development-and-testing.md`, `docs/implementation-guide.md`).
+- **Documented Operational Limitations**:
+  1. *Realtime WebSocket Client Delivery*: Database-side CDC publication membership (`bus_current_state` in `supabase_realtime`) and canonical row persistence are verified. Actual live WebSocket message delivery to mobile clients is an out-of-process client integration responsibility and must be tested in the Flutter mobile application.
+  2. *Render Cloud Ingress Topology*: Software CIDR parsing and anti-spoofing algorithms are verified in Vitest. However, live Render production ingress settings (e.g. proxy headers, CDN presence) have not been inspected in the cloud and must be verified during staging deployment.
+  3. *Sequential Trip Completion*: In `src/routes/trips.ts`, `/trips/:id/end` performs sequential REST updates rather than an atomic database transaction. An atomic `end_bus_trip` RPC should be added in a future migration.
 - **Verification Result**:
-  - `npm test`: 40/40 tests passing across 5 test suites.
-  - `npm run test:integration`: 14/14 real database integration tests passing.
+  - `npm test`: 41/41 tests passing across 5 test suites.
+  - `npm run test:integration`: 15/15 real database integration tests passing.
   - `npm run typecheck`: 0 compiler diagnostics.
   - `npm run build`: Clean production build.

@@ -239,3 +239,15 @@ In `src/routes/trips.ts`, the trip ending operation `/trips/:id/end` executes th
 These operations are sequential REST calls executed by Fastify rather than a single atomic PostgreSQL transaction. If the Node.js process is terminated mid-sequence, the trip will be marked completed while `bus_current_state.trip_id` may remain populated until the subsequent telemetry packet arrives and evaluates active trips.
 
 **Future Remediation**: Implement an atomic `end_bus_trip(p_trip_id uuid)` PostgreSQL RPC in a future database migration to wrap these three updates in a single ACID transaction.
+
+### Known Operational Limitation: Realtime WebSocket Delivery Scope
+
+In this backend repository:
+- **Verified**: We have verified database-side CDC publication membership (`bus_current_state` enrolled in `supabase_realtime`) and instantaneous canonical row persistence via `ingest_telemetry_packet`.
+- **Not Tested / Limitation**: We did **NOT** connect a live WebSocket client to the Supabase Realtime service to verify broadcast message delivery across the network. Live WebSocket delivery is an out-of-process client integration responsibility and must be validated through the Flutter mobile app test suite.
+
+### Known Operational Limitation: Render Upstream Ingress Topology
+
+In Fastify:
+- **Verified**: Automated unit tests (`test/security.test.ts`) prove that when `trustProxy` is set to private RFC1918 CIDRs, direct public connections cannot spoof `X-Forwarded-For`, and multi-hop proxy chains halt at the first untrusted upstream IP. Furthermore, authenticated `/telemetry` routes key rate limits on `req.user.sub` (device identifier), completely immunizing them from IP-spoofing evasion.
+- **Limitation**: While the CIDR algorithm is verified in software, the physical Render deployment topology (whether Render assigns specific non-RFC1918 ingress gateways or whether an upstream CDN like Cloudflare is active) has not been inspected live. Render dashboard network settings should be verified during staging deployment.

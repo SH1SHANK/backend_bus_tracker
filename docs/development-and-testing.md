@@ -111,8 +111,8 @@ flowchart TD
 |---|---|---|---|---|
 | **Tier 1: Unit Tests** | `npm test` | In-memory functions (`src/services/`) | Haversine distance, speed calculations, coordinate checks, Bcrypt hash verification. | Does not prove Fastify route wiring or database compatibility. |
 | **Tier 2: Mocked Route Tests** | `npm test` | Fastify app with Vitest mocks | TypeBox validation schemas, HTTP status codes (200, 400, 401, 409, 422), route error handling. | Does not prove actual PostgreSQL stored procedures or SQL locks work. |
-| **Tier 3: Real Integration Tests** | `npm run test:integration` | Real Fastify app $\to$ Local Supabase RPCs | End-to-end integration: HTTP injection calls real `ingest_telemetry_packet` & `reset_device_sequence`, verifies DB rows. | Does not prove cellular antenna physics or physical ESP32 flash memory. |
-| **Tier 4: Direct SQL Tests** | `docker exec ... psql < telemetry_ingestion_test.sql` | PostgreSQL engine directly | PostgreSQL locking, PostGIS spatial functions, exact 7-field equality, RLS, Realtime publication. | Does not test Fastify HTTP gateway routing. |
+| **Tier 3: Real Integration Tests** | `npm run test:integration` | Real Fastify app $\to$ Local Supabase RPCs | End-to-end integration: HTTP injection calls real `ingest_telemetry_packet` & `reset_device_sequence`, verifies DB rows, bidirectional Bcrypt. | Does not prove cellular antenna physics, live WebSocket delivery to Flutter clients across the network, or Render cloud ingress topology. |
+| **Tier 4: Direct SQL Tests** | `docker exec ... psql < telemetry_ingestion_test.sql` | PostgreSQL engine directly | PostgreSQL locking, PostGIS spatial functions, exact 7-field equality, RLS, Realtime publication table membership. | Does not test Fastify HTTP gateway routing or live client subscriptions. |
 
 ---
 
@@ -123,14 +123,14 @@ Fast, hermetic tests that run without external dependencies:
 ```bash
 npm test
 ```
-Expected output: 40 tests passed across 5 files.
+Expected output: 41 tests passed across 5 files (includes bidirectional Bcrypt unit tests and proxy anti-spoofing unit tests).
 
 ### 4.2 Real Fastify-to-Supabase Integration Tests
 Executes real HTTP requests against local Supabase:
 ```bash
 npm run test:integration
 ```
-Expected output: 14 tests passed across 1 file.
+Expected output: 15 tests passed across 1 file (includes bidirectional Node <-> Postgres Bcrypt verification, session reset idempotency, and advisory-lock concurrency).
 
 ### 4.3 Direct PostgreSQL Database Tests
 Runs the 18 comprehensive SQL test suites inside the local Supabase Postgres container:
@@ -141,7 +141,22 @@ Expected output: `ALL 18 TEST SUITES PASSED CLEANLY WITH ZERO LEFTOVER STATE!`.
 
 ---
 
-## 5. Troubleshooting & Debugging Guide
+## 5. Known Operational Limitations & Verification Boundaries
+
+1. **Live Realtime WebSocket Delivery**:
+   - **Verified**: Database-side CDC publication membership (`bus_current_state` enrolled in `supabase_realtime`) and instantaneous canonical row persistence via `ingest_telemetry_packet` are verified.
+   - **Limitation / Flutter Responsibility**: We have **not** connected an active WebSocket client to verify real-time event streaming across the network. Live WebSocket delivery is an out-of-process client integration responsibility and must be validated through the Flutter mobile app test suite.
+
+2. **Render Cloud Ingress Topology**:
+   - **Verified**: Automated unit tests (`test/security.test.ts`) verify that Fastify's RFC1918 `trustProxy` configuration ignores spoofed `X-Forwarded-For` headers from untrusted direct sockets and stops at the first untrusted hop in multi-hop chains. Authenticated telemetry routes also key rate limits on `req.user.sub` (device identifier), preventing IP-spoofing evasion.
+   - **Limitation**: The physical Render production deployment topology (e.g., whether Render assigns specific non-RFC1918 gateway IPs or whether an upstream CDN/Cloudflare is active) has not been inspected live. Render dashboard network settings should be verified during staging deployment.
+
+3. **Sequential Trip Completion**:
+   - **Limitation**: In `src/routes/trips.ts`, `/trips/:id/end` performs sequential REST updates (`trips` update -> `Promise.all([bus_events, bus_current_state])`) rather than an atomic database transaction. If the Node process terminates between calls, `trip` is marked completed while `bus_current_state.trip_id` may remain populated until cleared by the next incoming telemetry packet. An atomic `end_bus_trip` RPC should be added in a future database migration.
+
+---
+
+## 6. Troubleshooting & Debugging Guide
 
 ### 1. `INVALID_CREDENTIALS` / 401 on Session Reset
 - **Symptom**: `POST /api/v1/auth/reset-session` returns HTTP 401 `invalid_credentials` even with the correct secret.

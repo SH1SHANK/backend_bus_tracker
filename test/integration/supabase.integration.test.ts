@@ -27,8 +27,12 @@ const db = createClient(supabaseUrl, supabaseKey, {
 // Test fixtures with safe unique identifiers
 const TEST_BUS_ID = '00000000-0000-0000-0000-000000000099';
 const TEST_BUS_NUMBER = 'INT-BUS-TEST-99';
+const TEST_BUS_2_ID = '00000000-0000-0000-0000-000000000098';
+const TEST_BUS_2_NUMBER = 'INT-BUS-TEST-98';
 const TEST_DEVICE_ID = 'INT-DEV-TEST-001';
+const TEST_DEVICE_PG_ID = 'INT-DEV-PG-002';
 const TEST_SECRET = 'IntegrationSecret1234!'; // 22 chars >= 16 chars
+const TEST_PG_SECRET = 'PgGeneratedSecret1234!'; // 22 chars >= 16 chars
 
 let app: Awaited<ReturnType<typeof buildApp>>;
 let deviceToken: string;
@@ -42,20 +46,28 @@ describe('Fastify-to-Supabase Real Database Integration Suite', () => {
     }
 
     // 1. Clean up any previous test remnants
-    await db.from('bus_events').delete().eq('bus_id', TEST_BUS_ID);
-    await db.from('bus_positions').delete().eq('bus_id', TEST_BUS_ID);
-    await db.from('bus_current_state').delete().eq('bus_id', TEST_BUS_ID);
-    await db.from('devices').delete().eq('device_id', TEST_DEVICE_ID);
-    await db.from('buses').delete().eq('id', TEST_BUS_ID);
+    await db.from('bus_events').delete().in('bus_id', [TEST_BUS_ID, TEST_BUS_2_ID]);
+    await db.from('bus_positions').delete().in('bus_id', [TEST_BUS_ID, TEST_BUS_2_ID]);
+    await db.from('bus_current_state').delete().in('bus_id', [TEST_BUS_ID, TEST_BUS_2_ID]);
+    await db.from('devices').delete().in('device_id', [TEST_DEVICE_ID, TEST_DEVICE_PG_ID]);
+    await db.from('buses').delete().in('id', [TEST_BUS_ID, TEST_BUS_2_ID]);
 
-    // 2. Insert test bus fixture
-    const { error: busErr } = await db.from('buses').insert({
-      id: TEST_BUS_ID,
-      bus_number: TEST_BUS_NUMBER,
-      display_name: 'Integration Test Shuttle',
-      is_active: true,
-    });
-    if (busErr) throw new Error(`Failed to create test bus: ${busErr.message}`);
+    // 2. Insert test bus fixtures
+    const { error: busErr } = await db.from('buses').insert([
+      {
+        id: TEST_BUS_ID,
+        bus_number: TEST_BUS_NUMBER,
+        display_name: 'Integration Test Shuttle',
+        is_active: true,
+      },
+      {
+        id: TEST_BUS_2_ID,
+        bus_number: TEST_BUS_2_NUMBER,
+        display_name: 'Integration Test Shuttle 2',
+        is_active: true,
+      },
+    ]);
+    if (busErr) throw new Error(`Failed to create test buses: ${busErr.message}`);
 
     // 3. Register test tracking device with Bcrypt 8-round hash
     const credHash = await hashSecret(TEST_SECRET);
@@ -75,18 +87,18 @@ describe('Fastify-to-Supabase Real Database Integration Suite', () => {
   afterAll(async () => {
     // Deterministic cleanup
     if (app) await app.close();
-    await db.from('bus_events').delete().eq('bus_id', TEST_BUS_ID);
-    await db.from('bus_positions').delete().eq('bus_id', TEST_BUS_ID);
-    await db.from('bus_current_state').delete().eq('bus_id', TEST_BUS_ID);
-    await db.from('devices').delete().eq('device_id', TEST_DEVICE_ID);
-    await db.from('buses').delete().eq('id', TEST_BUS_ID);
+    await db.from('bus_events').delete().in('bus_id', [TEST_BUS_ID, TEST_BUS_2_ID]);
+    await db.from('bus_positions').delete().in('bus_id', [TEST_BUS_ID, TEST_BUS_2_ID]);
+    await db.from('bus_current_state').delete().in('bus_id', [TEST_BUS_ID, TEST_BUS_2_ID]);
+    await db.from('devices').delete().in('device_id', [TEST_DEVICE_ID, TEST_DEVICE_PG_ID]);
+    await db.from('buses').delete().in('id', [TEST_BUS_ID, TEST_BUS_2_ID]);
   });
 
   // --------------------------------------------------------------------------
-  // Scenario A: Provisioning & Authentication
+  // Scenario A: Provisioning & Authentication (Bidirectional Bcrypt Verification)
   // --------------------------------------------------------------------------
-  describe('A. Provisioning & Authentication', () => {
-    it('authenticates valid device credentials and returns JWT', async () => {
+  describe('A. Provisioning & Authentication (Bidirectional Bcrypt)', () => {
+    it('authenticates device with Node.js-generated Bcrypt hash (Direction 1: Node -> Fastify)', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/device',
@@ -104,6 +116,35 @@ describe('Fastify-to-Supabase Real Database Integration Suite', () => {
 
       // Save token for subsequent tests
       deviceToken = body.token;
+    });
+
+    it('authenticates device with PostgreSQL pgcrypto-generated hash (Direction 2: PostgreSQL -> Fastify)', async () => {
+      // 1. Provision device using PostgreSQL stored procedure register_tracking_device
+      // This hashes the secret inside PostgreSQL using extensions.crypt(..., extensions.gen_salt('bf', 8))
+      const { data: regResult, error: regErr } = await db.rpc('register_tracking_device', {
+        p_device_id: TEST_DEVICE_PG_ID,
+        p_bus_number: TEST_BUS_2_NUMBER,
+        p_secret: TEST_PG_SECRET,
+        p_allow_reassign: true,
+      });
+
+      expect(regErr).toBeNull();
+      expect(regResult?.ok).toBe(true);
+
+      // 2. Fastify verifies the PostgreSQL-generated hash using Node.js verifySecret (bcryptjs)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/device',
+        payload: {
+          device_id: TEST_DEVICE_PG_ID,
+          secret: TEST_PG_SECRET,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.token).toBeDefined();
+      expect(body.token_type).toBe('Bearer');
     });
 
     it('rejects invalid secret with HTTP 401', async () => {
@@ -546,17 +587,19 @@ describe('Fastify-to-Supabase Real Database Integration Suite', () => {
   });
 
   // --------------------------------------------------------------------------
-  // Scenario J: Realtime Publication Enrollment
+  // Scenario J: Realtime Publication Enrollment & Canonical State
+  // Note: Proves database-side canonical row persistence and RPC active reads.
+  // Actual live WebSocket streaming to mobile clients is an out-of-process
+  // integration responsibility tested via the Flutter client.
   // --------------------------------------------------------------------------
-  describe('J. Realtime Publication Enrollment', () => {
-    it('verifies bus_current_state is registered in supabase_realtime publication', async () => {
-      // Query pg_publication_tables to verify publication membership
+  describe('J. Realtime Publication Enrollment & Canonical State', () => {
+    it('verifies bus_current_state persistence and active position RPC reads (distinguished from live WebSocket delivery)', async () => {
+      // 1. Verify get_active_bus_positions() returns array with active entries
       const { data, error } = await db.rpc('get_active_bus_positions');
-      // The function get_active_bus_positions proves active state reads work
       expect(error).toBeNull();
       expect(Array.isArray(data)).toBe(true);
 
-      // Also verify current state has our test bus
+      // 2. Verify canonical state row has test bus position
       const { data: busState } = await db
         .from('bus_current_state')
         .select('*')

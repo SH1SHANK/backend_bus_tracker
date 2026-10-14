@@ -5,24 +5,42 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 
 beforeAll(async () => {
   app = await buildApp();
+  app.get('/test-client-ip', async (req) => ({ ip: req.ip, ips: req.ips }));
 });
 
 describe('Security & Proxy Trust', () => {
-  it('correctly resolves client IP through trusted proxy hops', async () => {
-    // Inject request from trusted loopback (127.0.0.1) with an external client IP in X-Forwarded-For
-    const clientIp = '203.0.113.195';
+  it('ignores spoofed X-Forwarded-For when connecting directly from an untrusted public IP', async () => {
+    // Untrusted public client connects directly (remoteAddress: 203.0.113.1) and tries to spoof 1.2.3.4
     const res = await app.inject({
       method: 'GET',
-      url: '/healthz',
+      url: '/test-client-ip',
+      remoteAddress: '203.0.113.1', // NOT in trusted RFC1918 CIDRs
       headers: {
-        'x-forwarded-for': clientIp,
+        'x-forwarded-for': '1.2.3.4', // Attempted spoof
       },
     });
 
     expect(res.statusCode).toBe(200);
-    // Fastify app request.ip resolution test:
-    // With trustedProxies including 127.0.0.1, Fastify trusts the hop and inspects the clientIp
-    expect(res.raw.req.headers['x-forwarded-for']).toBe(clientIp);
+    // Fastify must reject the spoofed header and attribute the request to the direct socket IP
+    expect(res.json().ip).toBe('203.0.113.1');
+  });
+
+  it('stops at the first untrusted upstream hop when request arrives via trusted private proxy', async () => {
+    // Request arrives via trusted internal proxy (10.0.0.1 / Render internal network)
+    // Client sent: X-Forwarded-For: 1.2.3.4 (spoofed), 203.0.113.50 (real client appended by proxy)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/test-client-ip',
+      remoteAddress: '10.0.0.1', // IN trusted RFC1918 CIDR (10.0.0.0/8)
+      headers: {
+        'x-forwarded-for': '1.2.3.4, 203.0.113.50',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Fastify trusts 10.0.0.1, inspects chain, sees 203.0.113.50 (untrusted), and halts.
+    // The spoofed 1.2.3.4 preceding it is NEVER trusted!
+    expect(res.json().ip).toBe('203.0.113.50');
   });
 
   it('rate limits per device ID rather than client IP for authenticated routes', async () => {
