@@ -73,11 +73,12 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         return reply.code(401).send({ ok: false, code, message: msg });
       }
 
-      req.log.info({ device_id, epoch: data.epoch, retry: data.idempotent_retry }, 'device sequence reset confirmed');
+      const resolvedEpoch = Number(data.epoch ?? data.new_epoch);
+      req.log.info({ device_id, epoch: resolvedEpoch, retry: data.idempotent_retry }, 'device sequence reset confirmed');
       return {
         ok: true,
         code: data.code,
-        epoch: data.epoch,
+        epoch: resolvedEpoch,
         device_id: data.device_id,
         bus_id: data.bus_id,
         idempotent_retry: data.idempotent_retry ?? false,

@@ -61,6 +61,10 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       const result = await ingestTelemetry(device.sub, device.bus_id, processed);
       end();
 
+      if (!result || typeof result !== 'object') {
+        throw new Error('Invalid or empty response from ingest_telemetry_packet');
+      }
+
       // Handle idempotent duplicate packet from RPC
       if (result.ok && result.code === 'DUPLICATE_PACKET') {
         return reply.code(200).send({

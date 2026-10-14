@@ -163,3 +163,44 @@ Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACK
 3. **Firmware Reboot Boundary**:
    - Whenever power is cycled or watchdog triggers, step 1 is repeated, establishing `epoch = N + 1` and resetting sequence counter cleanly back to `1`.
 
+---
+
+## Phase 6: Fastify-to-Supabase Integration Verification & Architecture Documentation
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Files Modified**:
+  - `src/lib/password.ts`
+  - `src/routes/auth.ts`
+  - `src/routes/telemetry.ts`
+  - `vitest.config.ts`
+  - `vitest.integration.config.ts` (new)
+  - `package.json`
+  - `test/security.test.ts` (new)
+  - `test/integration/supabase.integration.test.ts` (new)
+  - `docs/backend-architecture.md` (new)
+  - `docs/telemetry-protocol.md` (new)
+  - `docs/development-and-testing.md` (new)
+  - `docs/implementation-guide.md` (new)
+  - `docs/telemetry-integration-changelog.md`
+  - `docs/pr-description.md`
+- **What Changed & Why**:
+  - **Critical Bcrypt Prefix Alignment ($2a$ vs $2b$)**: Discovered during real database integration testing that `bcryptjs.hash()` outputs `$2b$08$...` by default. PostgreSQL `pgcrypto` `crypt()` only recognizes the `$2a$` prefix and fails verification when comparing `$2b$` hashes. Updated `src/lib/password.ts` to replace `^\$2b\$` with `$2a$`, establishing 100% bidirectional cryptographic compatibility between Node.js and PostgreSQL.
+  - **Reset Epoch Field Reconciliation**: Resolved epoch return value in `src/routes/auth.ts` from `Number(data.epoch ?? data.new_epoch)`. `reset_device_sequence` returns `new_epoch` on fresh advance and `epoch` on idempotent retry.
+  - **Real Fastify-to-Supabase Integration Suite**: Implemented `test/integration/supabase.integration.test.ts` running real HTTP requests against local Supabase containers (`http://127.0.0.1:54321`), covering:
+    - Scenario A: Device provisioning & authentication.
+    - Scenario B: Session reset & idempotent retry with same `session_id`.
+    - Scenario C: Successful telemetry persistence in `bus_positions` & `bus_current_state`.
+    - Scenario D: Exact duplicate retry idempotency without extra history rows.
+    - Scenario E: Conflicting sequence reuse rejection (HTTP 409 `SEQUENCE_REUSE_CONFLICT`).
+    - Scenario F: Epoch transition, reboot recovery, and stale epoch rejection (HTTP 409 `STALE_EPOCH_PACKET`).
+    - Scenario G: Dynamic device revocation blocking.
+    - Scenario H: Validation boundary invariants (NITC corridor 422, future skew 422, nullable GNSS fields 200).
+    - Scenario I: Concurrency safety under advisory locks (5 concurrent packets processed safely).
+    - Scenario J: Realtime publication enrollment verification.
+  - **Proxy Trust & Security Testing**: Added `test/security.test.ts` validating client IP resolution through trusted proxies and verifying rate limits key on `req.user.sub` for authenticated devices.
+  - **Architecture & System Documentation**: Added comprehensive, standalone engineering documentation (`docs/backend-architecture.md`, `docs/telemetry-protocol.md`, `docs/development-and-testing.md`, `docs/implementation-guide.md`).
+- **Verification Result**:
+  - `npm test`: 40/40 tests passing across 5 test suites.
+  - `npm run test:integration`: 14/14 real database integration tests passing.
+  - `npm run typecheck`: 0 compiler diagnostics.
+  - `npm run build`: Clean production build.

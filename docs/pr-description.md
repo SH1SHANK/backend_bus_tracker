@@ -48,14 +48,35 @@ Direct read-only inspection of the PostgreSQL system catalog (`pg_proc` and `inf
 | **Phase 4** | `19fbb02` | `fix: align telemetry validation, spatial APIs, and proxy trust` | Bounded coordinates to NITC corridor, clock drift to 15m past / 1m future, removed in-memory duplicate drop, cleared `trip_id` on trip end, updated spatial RPCs to `get_nearby_buses` and `get_nearby_stops`. |
 | **Phase 5** | `d50797f` | `test: add comprehensive auth, readiness, and telemetry test coverage` | Added `test/auth.route.test.ts`, verified 35/35 tests passing across 4 suites, verified clean `npm run build`. |
 | **Hardening** | `f2c35d1` | `fix: enforce mandatory epoch/session_id and dynamic device revocation` | Made `epoch` and `session_id` strictly required, added dynamic `is_active` check in auth plugin, 38/38 tests passing. |
-| **Response & Protocols** | *(current)* | `fix: preserve stored/state_updated flags and document ESP32 protocol` | Returned exact `stored` and `state_updated` booleans from DB RPC in all branches; documented Render proxy trust and ESP32 reboot protocol. |
+| **Response & Protocols** | `08da6a4` | `fix: preserve stored/state_updated flags and document ESP32 protocol` | Returned exact `stored` and `state_updated` booleans from DB RPC in all branches; documented Render proxy trust and ESP32 reboot protocol. |
+| **Phase 6** | *(current)* | `test: add Fastify-to-Supabase integration suite and architecture docs` | Fixed Bcrypt `$2a$` prefix compatibility with `pgcrypto`; resolved `new_epoch` reset mapping; added 14 real Fastify-to-Supabase integration tests; authored complete architecture and protocol documentation. |
 
 ---
 
 ## Verification & Test Results
 
-### 1. Isolated Database Integration Test Suite (`telemetry_ingestion_test.sql`)
-Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACKING_APP`):
+### 1. Real Fastify-to-Supabase Database Integration Test Suite (`npm run test:integration`)
+*Executed via HTTP injection through the actual Fastify application into local Supabase PostgreSQL (`http://127.0.0.1:54321`).*
+```
+✓ test/integration/supabase.integration.test.ts (14 tests)
+  ✓ A. Provisioning & Authentication (2 tests)
+  ✓ B. Session Reset & Idempotency (2 tests)
+  ✓ C. Successful Telemetry Ingestion (1 test)
+  ✓ D. Exact Duplicate Retry Idempotency (1 test)
+  ✓ E. Conflicting Sequence Reuse (1 test)
+  ✓ F. Epoch Transitions and Stale Packets (1 test)
+  ✓ G. Dynamic Device Revocation (1 test)
+  ✓ H. Validation and Boundary Invariants (3 tests)
+  ✓ I. Concurrency Safety under Database Locks (1 test)
+  ✓ J. Realtime Publication Enrollment (1 test)
+
+Test Files  1 passed (1)
+Tests       14 passed (14)
+Duration    722ms
+```
+
+### 2. Isolated Database SQL Test Suite (`telemetry_ingestion_test.sql`)
+Executed directly against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACKING_APP`):
 - **Result**: **ALL 18 TEST SUITES PASSED CLEANLY WITH ZERO LEFTOVER STATE!**
   - Test 1: Valid telemetry packet ingestion & atomic persistence.
   - Test 2: Exact multi-field duplicate packet retry idempotency.
@@ -76,20 +97,21 @@ Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACK
   - Test 16: `register_tracking_device()` provisioning and protections.
   - Test 17: Pre-existing legacy data upgrade with sequence collisions.
 
-### 2. Automated Unit and Route Test Suite (`npm test`)
-*Note: The following 38 tests verify application logic, validation schemas, and route error mapping using isolated mocks.*
+### 3. Automated Unit and Route Test Suite (`npm test`)
+*Note: The following 40 tests verify application logic, validation schemas, security headers, and route error mapping using isolated mocks.*
 ```
 ✓ test/core.test.ts (14 tests)
 ✓ test/reset_session.test.ts (6 tests)
 ✓ test/telemetry.route.test.ts (13 tests)
+✓ test/security.test.ts (2 tests)
 ✓ test/auth.route.test.ts (5 tests)
 
-Test Files  4 passed (4)
-Tests       38 passed (38)
-Duration    595ms
+Test Files  5 passed (5)
+Tests       40 passed (40)
+Duration    617ms
 ```
 
-### 3. TypeScript Compilation Check (`npm run typecheck`)
+### 4. TypeScript Compilation Check (`npm run typecheck`)
 ```
 > bus-telemetry-api@1.0.0 typecheck
 > tsc -p tsconfig.json

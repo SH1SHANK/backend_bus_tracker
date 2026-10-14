@@ -12,6 +12,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "provision-device": "tsx scripts/provision-device.ts"
   },
   "dependencies": {

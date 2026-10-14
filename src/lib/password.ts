@@ -6,7 +6,9 @@ const BCRYPT_ROUNDS = 8; // Binary-compatible with PostgreSQL pgcrypto gen_salt(
  * Hashes a device secret using Bcrypt with 8 salt rounds.
  */
 export async function hashSecret(secret: string): Promise<string> {
-  return bcrypt.hash(secret, BCRYPT_ROUNDS);
+  const hash = await bcrypt.hash(secret, BCRYPT_ROUNDS);
+  // PostgreSQL pgcrypto gen_salt('bf') expects $2a$ prefix
+  return hash.replace(/^\$2b\$/, '$2a$');
 }
 
 /**
