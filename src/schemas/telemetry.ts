@@ -9,9 +9,10 @@ export const TelemetryBody = Type.Object(
     timestamp: Type.String({ format: 'date-time' }),
     latitude: Type.Number({ minimum: -90, maximum: 90 }),
     longitude: Type.Number({ minimum: -180, maximum: 180 }),
-    speed: Type.Number({ minimum: 0, maximum: 400 }), // km/h
-    heading: Type.Number({ minimum: 0, maximum: 360 }), // degrees
-    accuracy: Type.Number({ minimum: 0, maximum: 10_000 }), // metres
+    speed: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 400 }), Type.Null()])), // km/h
+    heading: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 360 }), Type.Null()])), // degrees
+    accuracy: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10_000 }), Type.Null()])), // metres
+    epoch: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
   },
   { additionalProperties: false },
 );

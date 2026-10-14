@@ -91,3 +91,27 @@ Verified against Supabase migration `20261014040200_complete_transport_backend_f
 - **Tests Updated**:
   - `test/core.test.ts`: Added assertion verifying that generated hashes start with `$2a$08$` or `$2b$08$` and compare successfully.
 - **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 23/23 tests passed.
+
+---
+
+## Phase 3: Epoch and Sequence Handling
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Files Modified**:
+  - `src/schemas/auth.ts` (new)
+  - `src/schemas/telemetry.ts`
+  - `src/routes/auth.ts`
+  - `src/services/validation.ts`
+  - `test/reset_session.test.ts` (new)
+- **What Changed & Why**:
+  - Implemented `POST /api/v1/auth/reset-session` endpoint in Fastify calling `reset_device_sequence` RPC:
+    - Allows ESP32 trackers to negotiate a new session epoch upon reboot and reset their sequence counters.
+    - Idempotent retries: passes `p_session_id` to PostgreSQL. If the response was dropped and the tracker retries with the same `session_id`, the RPC returns the existing epoch with `idempotent_retry: true` without incrementing again.
+    - Resets `bus_current_state.seq` to 0, ensuring post-reboot `seq = 1` packets pass strict monotonicity checks.
+  - Added optional `epoch` (minimum: 1) and nullable metrics support (`speed`, `heading`, `accuracy`) to `TelemetryBody` schema.
+  - Added null-safety checks in `validateTelemetry` for optional numeric metrics.
+  - Enforced 16-character minimum secret invariant across `ResetSessionBody` and `DeviceAuthBody`.
+- **Related Finding**: `DATA-001`, `DATA-004`.
+- **Tests Added**:
+  - `test/reset_session.test.ts`: Added 5 unit tests covering valid reset (200), idempotent session retry (200), invalid credentials (401), short secret rejection (400), and missing parameter rejection (400).
+- **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 28/28 tests passed.
