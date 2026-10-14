@@ -87,5 +87,20 @@ describe('POST /api/v1/telemetry', () => {
   it('422 on (0,0)', async () =>
     expect((await post({ ...packet(), latitude: 0, longitude: 0 }, token)).statusCode).toBe(422));
     
+  it('200 accepts packet with explicit epoch and nullable metrics', async () => {
+    const res = await post(
+      {
+        ...packet(2),
+        epoch: 2,
+        speed: null,
+        heading: null,
+        accuracy: null,
+      },
+      token,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.json().stored).toBe(true);
+  });
+
   it('healthz ok', async () => expect((await app.inject('/healthz')).statusCode).toBe(200));
 });

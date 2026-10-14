@@ -139,3 +139,36 @@ Verified against Supabase migration `20261014040200_complete_transport_backend_f
 - **Tests Updated**:
   - `test/core.test.ts`: Added unit tests for 15-minute max packet age and updated accuracy bounds.
 - **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 29/29 tests passed.
+
+---
+
+## Phase 5: Integration Testing & Coverage
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Files Modified**:
+  - `test/auth.route.test.ts` (new)
+  - `test/telemetry.route.test.ts`
+- **What Changed & Why**:
+  - Created `test/auth.route.test.ts` to comprehensively test `POST /api/v1/auth/device`:
+    - Valid device credentials verify using 8-round Bcrypt and return signed JWT with 12-hour TTL.
+    - Wrong secret returns HTTP 401 `invalid_credentials`.
+    - Inactive device (`is_active = false`) returns HTTP 401.
+    - Secret shorter than 16 characters returns HTTP 400.
+    - `GET /readyz` database readiness probe returns HTTP 200 `{ status: 'ready' }`.
+  - Added test case in `test/telemetry.route.test.ts` asserting that packets with explicit `epoch: 2` and nullable `speed`, `heading`, `accuracy` are accepted cleanly (HTTP 200).
+- **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 35/35 tests passed across 4 test suites. `npm run build` completed successfully.
+
+---
+
+## Phase 6: Final Review & Quality Gate
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Status**: Completed (Review-Ready)
+- **Review Summary**:
+  - Git history is cleanly partitioned across focused phase commits.
+  - Zero secrets or sensitive credentials committed.
+  - Production build (`npm run build`) outputs cleanly to `dist/`.
+  - Clean Bcrypt standardization (8 rounds) with zero legacy code or fallbacks.
+  - 16-character minimum secret invariant maintained across all endpoints and scripts.
+  - Device text identifier mapping verified end to end.
+  - Reboot recovery protocol verified with idempotent session retries.
