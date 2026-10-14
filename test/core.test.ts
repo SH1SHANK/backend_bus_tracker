@@ -19,8 +19,12 @@ describe('validation', () => {
     expect(validateTelemetry({ ...base, latitude: 0, longitude: 0 }, now)?.code).toBe('no_gps_fix'));
   it('rejects outside service area', () =>
     expect(validateTelemetry({ ...base, latitude: 28.6, longitude: 77.2 }, now)?.code).toBe('outside_service_area'));
-  it('rejects poor accuracy', () =>
-    expect(validateTelemetry({ ...base, accuracy: 250 }, now)?.code).toBe('poor_accuracy'));
+  it('rejects poor accuracy (>500m)', () =>
+    expect(validateTelemetry({ ...base, accuracy: 600 }, now)?.code).toBe('poor_accuracy'));
+  it('rejects packets older than 15 minutes', () => {
+    const oldTime = new Date(now.getTime() - 16 * 60 * 1000).toISOString();
+    expect(validateTelemetry({ ...base, timestamp: oldTime }, now)?.code).toBe('timestamp_too_old');
+  });
 });
 
 describe('anomaly detection', () => {

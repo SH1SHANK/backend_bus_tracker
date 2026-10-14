@@ -29,6 +29,10 @@ export const config = {
   corsOrigins: (process.env.CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   sentryDsn: process.env.SENTRY_DSN || undefined,
   metricsToken: process.env.METRICS_TOKEN || undefined,
+  trustedProxies: (process.env.TRUSTED_PROXIES ?? '127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
   rateLimit: {
     globalMax: num('RATE_LIMIT_GLOBAL_PER_MIN', 120),
     telemetryMax: num('RATE_LIMIT_TELEMETRY_PER_MIN', 30),
@@ -36,18 +40,19 @@ export const config = {
   },
   telemetry: {
     bbox: {
-      minLat: num('SERVICE_MIN_LAT', 8.0),
-      maxLat: num('SERVICE_MAX_LAT', 12.9),
-      minLon: num('SERVICE_MIN_LON', 74.8),
-      maxLon: num('SERVICE_MAX_LON', 77.5),
+      // NITC transit plausibility corridor (Kozhikode regional transit area)
+      minLat: num('SERVICE_MIN_LAT', 11.200000),
+      maxLat: num('SERVICE_MAX_LAT', 11.450000),
+      minLon: num('SERVICE_MIN_LON', 75.800000),
+      maxLon: num('SERVICE_MAX_LON', 76.100000),
     },
     maxSpeedKmh: num('MAX_SPEED_KMH', 120),
-    maxAccuracyM: num('MAX_ACCURACY_M', 100),
-    maxFutureSkewS: 60,
-    maxAgeS: num('MAX_PACKET_AGE_S', 21_600),
+    maxAccuracyM: num('MAX_ACCURACY_M', 500),
+    maxFutureSkewS: 60, // 1 minute future skew
+    maxAgeS: num('MAX_PACKET_AGE_S', 900), // 15 minutes max age (matches DB interval)
     stationarySpeedKmh: 2,
-    impliedSpeedSlack: 1.5, // implied speed must exceed maxSpeed*slack to flag
-    minJumpCheckDistM: 100, // ignore GPS noise below this displacement
+    impliedSpeedSlack: 1.5,
+    minJumpCheckDistM: 100,
     gpsJumpDistM: 1000,
     onlineWindowS: 60,
     stopRadiusM: num('STOP_RADIUS_M', 50),

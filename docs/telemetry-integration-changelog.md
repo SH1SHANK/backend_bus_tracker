@@ -115,3 +115,27 @@ Verified against Supabase migration `20261014040200_complete_transport_backend_f
 - **Tests Added**:
   - `test/reset_session.test.ts`: Added 5 unit tests covering valid reset (200), idempotent session retry (200), invalid credentials (401), short secret rejection (400), and missing parameter rejection (400).
 - **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 28/28 tests passed.
+
+---
+
+## Phase 4: Validation, Reliability, and Remaining APIs
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Files Modified**:
+  - `src/config.ts`
+  - `src/app.ts`
+  - `src/routes/telemetry.ts`
+  - `src/routes/trips.ts`
+  - `src/routes/buses.ts`
+  - `test/core.test.ts`
+- **What Changed & Why**:
+  - Aligned geospatial bounding box in `src/config.ts` to the Kozhikode / NITC transit corridor (`[11.200000, 11.450000]` lat, `[75.800000, 76.100000]` lon), matching database constraints (`DATA-002`).
+  - Aligned clock drift boundaries: max age set to 15 minutes (`900s`), future skew set to 1 minute (`60s`) (`DATA-003`).
+  - Hardened reverse proxy trust: `trustProxy` configured with strict CIDR masks (`127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`) to prevent client spoofing of `X-Forwarded-For` (`SEC-004`).
+  - Removed unisolated in-memory duplicate packet drop in `src/routes/telemetry.ts`. Deduplication, sequence ordering, and epoch validation now execute authoritatively inside PostgreSQL's transaction-scoped advisory locks, ensuring `devices.last_seen` updates are never dropped (`DATA-005`, `CONC-001`).
+  - Trip completion cleanup: in `/trips/:id/end`, atomically clear `bus_current_state.trip_id = null` when a trip ends to prevent idle buses from displaying stale trip references (`API-001`).
+  - Spatial RPC alignment: updated `src/routes/buses.ts` to call canonical PostGIS functions `get_nearby_buses` and `get_nearby_stops` (`API-002`).
+- **Related Finding**: `DATA-002`, `DATA-003`, `DATA-005`, `CONC-001`, `API-001`, `API-002`, `SEC-004`.
+- **Tests Updated**:
+  - `test/core.test.ts`: Added unit tests for 15-minute max packet age and updated accuracy bounds.
+- **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 29/29 tests passed.

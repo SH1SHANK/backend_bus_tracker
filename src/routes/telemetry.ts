@@ -46,13 +46,14 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       const invalid = validateTelemetry(body);
       if (invalid) return reject(422, invalid.code, invalid.message);
 
-      // 5. anomaly detection against last accepted state
-      const anomaly = detectAnomaly(body, await getLastState(device.bus_id));
-      if (anomaly.kind === 'duplicate' || anomaly.kind === 'stale') return ignore(anomaly.kind);
-      if (anomaly.kind === 'gps_jump' || anomaly.kind === 'impossible_speed')
-        return reject(422, anomaly.kind, `implied speed ${Math.round(anomaly.impliedSpeedKmh)} km/h`, 'anomaly');
-      if (anomaly.kind === 'ok' && anomaly.seqReset)
-        req.log.info({ device: device.sub, seq: body.seq }, 'sequence reset (device reboot?)');
+      // 5. anomaly detection (GPS jump checks against last accepted state)
+      const lastState = await getLastState(device.bus_id);
+      if (lastState) {
+        const anomaly = detectAnomaly(body, lastState);
+        if (anomaly.kind === 'gps_jump' || anomaly.kind === 'impossible_speed') {
+          return reject(422, anomaly.kind, `implied speed ${Math.round(anomaly.impliedSpeedKmh)} km/h`, 'anomaly');
+        }
+      }
 
       // 6. processing  7. persist (atomic RPC)
       const processed = processTelemetry(body);

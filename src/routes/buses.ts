@@ -40,7 +40,12 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
     },
     async (req) => {
       const { lat, lon, radius } = req.query;
-      const { data, error } = await supabase.rpc('nearby_buses', { p_lat: lat, p_lon: lon, p_radius_m: radius });
+      const { data, error } = await supabase.rpc('get_nearby_buses', {
+        p_latitude: lat,
+        p_longitude: lon,
+        p_radius_meters: radius,
+        p_limit: 20,
+      });
       if (error) throw new Error(error.message);
       return data ?? [];
     },
@@ -82,7 +87,12 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
     },
     async (req) => {
       const { lat, lon, limit } = req.query;
-      const { data, error } = await supabase.rpc('nearest_stops', { p_lat: lat, p_lon: lon, p_limit: limit });
+      const { data, error } = await supabase.rpc('get_nearby_stops', {
+        p_latitude: lat,
+        p_longitude: lon,
+        p_radius_meters: 1000,
+        p_limit: limit,
+      });
       if (error) throw new Error(error.message);
       return data ?? [];
     },

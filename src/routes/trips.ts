@@ -44,9 +44,12 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         .maybeSingle();
       if (error) throw new Error(error.message);
       if (!data) return reply.code(404).send({ ok: false, code: 'not_found', message: 'no active trip with that id' });
-      await supabase.from('bus_events').insert({
-        bus_id: data.bus_id, trip_id: data.id, event_type: 'trip_ended', occurred_at: data.ended_at,
-      });
+      await Promise.all([
+        supabase.from('bus_events').insert({
+          bus_id: data.bus_id, trip_id: data.id, event_type: 'trip_ended', occurred_at: data.ended_at,
+        }),
+        supabase.from('bus_current_state').update({ trip_id: null, updated_at: new Date().toISOString() }).eq('bus_id', data.bus_id),
+      ]);
       return data;
     },
   );
