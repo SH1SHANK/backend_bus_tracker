@@ -14,7 +14,8 @@ export const ResetSessionBody = Type.Object(
   {
     device_id: DeviceId,
     secret: Type.String({ minLength: 16, maxLength: 128 }),
-    session_id: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    // session_id is mandatory to ensure idempotency across cellular retry attempts
+    session_id: Type.String({ minLength: 1, maxLength: 128 }),
     reason: Type.Optional(Type.String({ maxLength: 100 })),
   },
   { additionalProperties: false },

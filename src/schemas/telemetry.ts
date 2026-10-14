@@ -12,7 +12,8 @@ export const TelemetryBody = Type.Object(
     speed: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 400 }), Type.Null()])), // km/h
     heading: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 360 }), Type.Null()])), // degrees
     accuracy: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10_000 }), Type.Null()])), // metres
-    epoch: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+    // Epoch is strictly required per zero-legacy policy to disambiguate hardware sessions
+    epoch: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
   },
   { additionalProperties: false },
 );

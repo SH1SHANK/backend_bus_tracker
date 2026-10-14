@@ -95,15 +95,25 @@ describe('POST /api/v1/auth/reset-session', () => {
     const res = await postReset({
       device_id: 'NITC-BUS-001',
       secret: 'wrong_secret_12345',
+      session_id: 'boot_session_001',
     });
     expect(res.statusCode).toBe(401);
     expect(res.json().code).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('rejects missing session_id with 400', async () => {
+    const res = await postReset({
+      device_id: 'NITC-BUS-001',
+      secret: 'super_secret_device_pass_16chars',
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('rejects secrets shorter than 16 characters with 400', async () => {
     const res = await postReset({
       device_id: 'NITC-BUS-001',
       secret: 'short_secret',
+      session_id: 'boot_session_001',
     });
     expect(res.statusCode).toBe(400);
   });
@@ -111,6 +121,7 @@ describe('POST /api/v1/auth/reset-session', () => {
   it('rejects missing device_id with 400', async () => {
     const res = await postReset({
       secret: 'super_secret_device_pass_16chars',
+      session_id: 'boot_session_001',
     });
     expect(res.statusCode).toBe(400);
   });

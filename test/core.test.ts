@@ -5,7 +5,7 @@ import { processTelemetry } from '../src/services/processing.js';
 import { hashSecret, verifySecret } from '../src/lib/password.js';
 
 const base = {
-  device_id: 'NITC-BUS-001', seq: 100, timestamp: '2026-10-07T06:40:12Z',
+  device_id: 'NITC-BUS-001', seq: 100, epoch: 1, timestamp: '2026-10-07T06:40:12Z',
   latitude: 11.321234, longitude: 75.934567, speed: 18.4, heading: 143.2, accuracy: 4.1,
 };
 const last = { seq: 99, recorded_at: '2026-10-07T06:40:02Z', latitude: 11.3212, longitude: 75.9345 };

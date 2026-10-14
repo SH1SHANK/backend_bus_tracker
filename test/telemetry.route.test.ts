@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
-const { mockIngestTelemetry } = vi.hoisted(() => ({
+const { mockIngestTelemetry, mockMaybeSingleDev } = vi.hoisted(() => ({
   mockIngestTelemetry: vi.fn(async (_dev: string, _bus: string, t: any) => {
     if (t.seq === 999) {
       return { ok: true, code: 'DUPLICATE_PACKET', stored: false, events: [] };
@@ -16,6 +16,10 @@ const { mockIngestTelemetry } = vi.hoisted(() => ({
     }
     return { ok: true, code: 'SUCCESS', stored: true, state_updated: true, events: [] };
   }),
+  mockMaybeSingleDev: vi.fn(async () => ({
+    data: { is_active: true, bus_id: 'b1' },
+    error: null,
+  })),
 }));
 
 vi.mock('../src/repositories/telemetry.repo.js', () => ({
@@ -23,12 +27,24 @@ vi.mock('../src/repositories/telemetry.repo.js', () => ({
   ingestTelemetry: mockIngestTelemetry,
 }));
 
+vi.mock('../src/lib/supabase.js', () => ({
+  supabase: {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          maybeSingle: mockMaybeSingleDev,
+        })),
+      })),
+    })),
+  },
+}));
+
 import { buildApp } from '../src/app.js';
 
 let app: Awaited<ReturnType<typeof buildApp>>;
 let token: string;
-const packet = (seq = 1) => ({
-  device_id: 'NITC-BUS-001', seq, timestamp: new Date().toISOString(),
+const packet = (seq = 1, epoch = 1) => ({
+  device_id: 'NITC-BUS-001', seq, epoch, timestamp: new Date().toISOString(),
   latitude: 11.321234, longitude: 75.934567, speed: 18.4, heading: 143.2, accuracy: 4.1,
 });
 
@@ -72,6 +88,15 @@ describe('POST /api/v1/telemetry', () => {
     expect(res.json().code).toBe('UNAUTHORIZED_DEVICE');
   });
 
+  it('401 when device was deactivated after JWT issuance', async () => {
+    mockMaybeSingleDev.mockImplementationOnce(async () => ({
+      data: { is_active: false, bus_id: 'b1' },
+      error: null,
+    }));
+    const res = await post(packet(1), token);
+    expect(res.statusCode).toBe(401);
+  });
+
   it('422 on coordinates out of bounds from DB', async () => {
     const res = await post(packet(666), token);
     expect(res.statusCode).toBe(422);
@@ -84,14 +109,19 @@ describe('POST /api/v1/telemetry', () => {
   it('400 on unknown field', async () =>
     expect((await post({ ...packet(), extra: 1 }, token)).statusCode).toBe(400));
     
+  it('400 when mandatory epoch is missing', async () => {
+    const p = packet();
+    delete (p as any).epoch;
+    expect((await post(p, token)).statusCode).toBe(400);
+  });
+
   it('422 on (0,0)', async () =>
     expect((await post({ ...packet(), latitude: 0, longitude: 0 }, token)).statusCode).toBe(422));
     
   it('200 accepts packet with explicit epoch and nullable metrics', async () => {
     const res = await post(
       {
-        ...packet(2),
-        epoch: 2,
+        ...packet(2, 2),
         speed: null,
         heading: null,
         accuracy: null,
