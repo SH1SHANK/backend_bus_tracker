@@ -66,6 +66,7 @@ describe('POST /api/v1/telemetry', () => {
     const res = await post(packet(1), token);
     expect(res.statusCode).toBe(200);
     expect(res.json().stored).toBe(true);
+    expect(res.json().state_updated).toBe(true);
     expect(res.json().ok).toBe(true);
   });
 
@@ -73,6 +74,7 @@ describe('POST /api/v1/telemetry', () => {
     const res = await post(packet(999), token);
     expect(res.statusCode).toBe(200);
     expect(res.json().stored).toBe(false);
+    expect(res.json().state_updated).toBe(false);
     expect(res.json().reason).toBe('duplicate');
   });
 

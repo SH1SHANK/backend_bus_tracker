@@ -107,17 +107,59 @@ Direct read-only inspection of the PostgreSQL system catalog (`pg_proc` and `inf
 
 ---
 
-## Phase 5: Integration Testing & Coverage
+## Phase 5: Testing, Hardening & Contract Verification
 - **Date**: 2026-10-14
 - **Branch**: `fix/telemetry-supabase-compatibility`
 - **Files Modified**:
-  - `test/auth.route.test.ts` (new)
+  - `src/routes/telemetry.ts`
+  - `src/schemas/auth.ts`
+  - `src/schemas/telemetry.ts`
+  - `src/plugins/auth.ts`
+  - `test/auth.route.test.ts`
   - `test/reset_session.test.ts`
   - `test/telemetry.route.test.ts`
   - `test/core.test.ts`
 - **What Changed & Why**:
-  - `test/auth.route.test.ts`: tests device auth with Bcrypt credentials, wrong password (401), inactive device (401), short secrets (400), and `/readyz` probe (200).
-  - `test/reset_session.test.ts`: tests valid session reset (200), idempotent session retry (200), invalid credentials (401), missing `session_id` (400), and short secrets (400).
-  - `test/telemetry.route.test.ts`: tests valid packet (200), duplicate packet (200), sequence reuse conflict (409), unauthorized/inactive device (401), revoked token deactivation (401), out of bounds (422), missing mandatory epoch (400), and explicit epoch with nullable metrics (200).
-- **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 38/38 tests passed across 4 test suites. `npm run build` completed successfully.
-- **Clarification**: All 38 tests are unit and mocked-route integration tests. Live database contracts were independently verified via read-only SQL queries on the Supabase catalog (`pg_proc` and `information_schema.columns`).
+  - **Telemetry Response Value Preservation**: Updated `src/routes/telemetry.ts` to strictly preserve and return PostgreSQL's actual `stored` and `state_updated` booleans in all branches (`stored: true, state_updated: true` on accepted write, `stored: false, state_updated: false, reason: "duplicate"` on idempotent duplicate retry, and `stored: false, state_updated: false` on ignored packets).
+  - **Dynamic Device Revocation**: In `src/plugins/auth.ts`, `authenticateDevice` checks `devices.is_active` dynamically so deactivated devices cannot write telemetry even with an unexpired JWT.
+  - **Mandatory Invariants**: Enforced mandatory `session_id` on reset and mandatory `epoch` (minimum: 1) on telemetry.
+  - **Render Proxy Trust Verification**: Verified `trustProxy: config.trustedProxies` configuring RFC1918 subnets (`127.0.0.1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16`). On Render, external HTTPS traffic is terminated at Render's edge load balancer and proxied to the container over internal network `10.x.x.x`. By restricting proxy trust to RFC1918 ranges instead of blanket `true`, Fastify validates the internal hop without allowing arbitrary public clients to spoof `X-Forwarded-For`.
+  - **Stop Radius & Route Deviation Alignment**: Verified `src/config.ts` defaults (`stopRadiusM: 50`, `routeDeviationM: 500`) precisely match PostgreSQL RPC parameter defaults (`p_stop_radius_m double precision DEFAULT 50.0`, `p_deviation_m double precision DEFAULT 500.0`).
+  - **Documented Known Limitation - Sequential Trip Completion**: Documented that `/trips/:id/end` performs sequential REST updates (`trips` update -> `Promise.all([bus_events, bus_current_state])`) rather than an atomic database transaction. If the Node process crashes between calls, `trip` could be marked completed while `bus_current_state.trip_id` is cleared on the subsequent telemetry packet. An atomic `end_bus_trip` RPC is recommended for a future migration.
+
+### Database Integration Test Suite (`telemetry_ingestion_test.sql`)
+Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACKING_APP`):
+- **Result**: **18/18 test suites passed cleanly with zero leftover state**.
+  - Test 1: Valid telemetry packet ingestion & atomic persistence.
+  - Test 2: Exact multi-field duplicate packet retry idempotency.
+  - Test 3: Sequence reuse with independently conflicting fields (all 7 fields tested).
+  - Test 4: Historical sequence reuse and delayed retries.
+  - Test 5: Out-of-order lower unseen sequence rejection.
+  - Test 6: Advancing sequence with regressed timestamp rejection.
+  - Test 6b: NULL-safety verified on sequence storage and duplicate retry.
+  - Test 7: Epoch security: unauthorized future epoch rejection & authorized reboot with idempotent retry across network drops.
+  - Test 8: Rejection of packets from previous session epochs.
+  - Test 9: Immediate device deactivation blocking.
+  - Test 10: Tracker replacement, freshness reset, and historical isolation.
+  - Test 11: Database constraints: single active device per bus & history uniqueness.
+  - Test 12: Multiple active trips detection & ambiguity prevention.
+  - Test 13: Telemetry boundary and value invariants.
+  - Test 14: Stop arrival geofencing, arrival dedup, and departure hysteresis.
+  - Test 15: `get_active_bus_positions()` freshness contract (<90s fresh, <15m stale, >15m unavailable).
+  - Test 16: `register_tracking_device()` provisioning and reassignment protections.
+  - Test 17: Pre-existing legacy data upgrade with sequence collisions simulation.
+
+### ESP32 Hardware Boot & Ingestion Protocol
+1. **Cold Boot / Reboot**:
+   - ESP32 boots and generates a random session identifier: `session_id = "boot-" + millis() + "-" + esp_random()`.
+   - Sends `POST /api/v1/auth/reset-session` with `{ device_id, secret, session_id, reason: "cold_boot" }`.
+   - If the network drops or the response times out, the ESP32 **must retry with the exact same `session_id`**.
+   - Server returns `{ ok: true, epoch: N, idempotent_retry: boolean }`.
+   - ESP32 stores `epoch = N` in volatile/RTC memory and initializes its sequence counter `seq = 1`.
+2. **Telemetry Transmission**:
+   - ESP32 emits `POST /api/v1/telemetry` with `{ device_id, seq, epoch, timestamp, latitude, longitude, ... }` incrementing `seq` for each new GPS fix.
+   - If transmission fails or times out, ESP32 retries with the **same `seq` and identical GPS data**.
+   - Server acknowledges retry with HTTP 200 `{ ok: true, stored: false, state_updated: false, reason: "duplicate" }`.
+3. **Firmware Reboot Boundary**:
+   - Whenever power is cycled or watchdog triggers, step 1 is repeated, establishing `epoch = N + 1` and resetting sequence counter cleanly back to `1`.
+

@@ -36,7 +36,7 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       };
       const ignore = (reason: string) => {
         telemetryTotal.inc({ result: 'ignored', reason });
-        return reply.code(200).send({ ok: true, stored: false, reason });
+        return reply.code(200).send({ ok: true, stored: false, state_updated: false, reason });
       };
 
       if (body.device_id !== device.sub)
@@ -66,6 +66,7 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         return reply.code(200).send({
           ok: true,
           stored: false,
+          state_updated: false,
           reason: 'duplicate',
         });
       }
@@ -74,8 +75,8 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         telemetryTotal.inc({ result: 'accepted', reason: processed.status });
         return {
           ok: true,
-          stored: true,
-          state_updated: result.state_updated,
+          stored: Boolean(result.stored ?? result.pos_inserted ?? true),
+          state_updated: Boolean(result.state_updated ?? false),
           events: result.events ?? [],
         };
       }
