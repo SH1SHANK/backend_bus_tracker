@@ -43,8 +43,9 @@ describe('processing + password', () => {
     expect(p.heading).toBe(0);
     expect(processTelemetry(base).status).toBe('moving');
   });
-  it('verifies scrypt hashes', async () => {
+  it('verifies bcrypt hashes', async () => {
     const h = await hashSecret('correct horse battery');
+    expect(h.startsWith('$2a$08$') || h.startsWith('$2b$08$')).toBe(true);
     expect(await verifySecret('correct horse battery', h)).toBe(true);
     expect(await verifySecret('wrong', h)).toBe(false);
   });

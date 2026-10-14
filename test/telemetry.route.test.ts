@@ -1,20 +1,22 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
-const mockIngestTelemetry = vi.fn(async (_dev: string, _bus: string, t: any) => {
-  if (t.seq === 999) {
-    return { ok: true, code: 'DUPLICATE_PACKET', stored: false, events: [] };
-  }
-  if (t.seq === 888) {
-    return { ok: false, code: 'SEQUENCE_REUSE_CONFLICT', error: 'Sequence number was previously used with conflicting telemetry data' };
-  }
-  if (t.seq === 777) {
-    return { ok: false, code: 'UNAUTHORIZED_DEVICE', error: 'Device not registered or inactive' };
-  }
-  if (t.seq === 666) {
-    return { ok: false, code: 'COORDINATES_OUT_OF_BOUNDS', error: 'Latitude or longitude outside valid regional transit bounds' };
-  }
-  return { ok: true, code: 'SUCCESS', stored: true, state_updated: true, events: [] };
-});
+const { mockIngestTelemetry } = vi.hoisted(() => ({
+  mockIngestTelemetry: vi.fn(async (_dev: string, _bus: string, t: any) => {
+    if (t.seq === 999) {
+      return { ok: true, code: 'DUPLICATE_PACKET', stored: false, events: [] };
+    }
+    if (t.seq === 888) {
+      return { ok: false, code: 'SEQUENCE_REUSE_CONFLICT', error: 'Sequence number was previously used with conflicting telemetry data' };
+    }
+    if (t.seq === 777) {
+      return { ok: false, code: 'UNAUTHORIZED_DEVICE', error: 'Device not registered or inactive' };
+    }
+    if (t.seq === 666) {
+      return { ok: false, code: 'COORDINATES_OUT_OF_BOUNDS', error: 'Latitude or longitude outside valid regional transit bounds' };
+    }
+    return { ok: true, code: 'SUCCESS', stored: true, state_updated: true, events: [] };
+  }),
+}));
 
 vi.mock('../src/repositories/telemetry.repo.js', () => ({
   getLastState: vi.fn(async () => null),

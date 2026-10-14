@@ -71,3 +71,23 @@ Verified against Supabase migration `20261014040200_complete_transport_backend_f
 - **Related Finding**: `DB-001`, `DB-002`.
 - **Tests Updated**:
   - `test/telemetry.route.test.ts` expanded with tests for duplicate packet handling (200), sequence reuse conflict (409), unauthorized device (401), and out of bounds coordinates (422).
+
+---
+
+## Phase 2: Device Authentication & Provisioning
+- **Date**: 2026-10-14
+- **Branch**: `fix/telemetry-supabase-compatibility`
+- **Files Modified**:
+  - `package.json` & `package-lock.json`
+  - `src/lib/password.ts`
+  - `scripts/provision-device.ts`
+  - `test/core.test.ts`
+- **What Changed & Why**:
+  - Replaced Node.js native `scrypt` hashing in `src/lib/password.ts` with `bcryptjs` using 8 salt rounds (`BCRYPT_ROUNDS = 8`). This matches PostgreSQL `pgcrypto` `gen_salt('bf', 8)` binary output (`$2a$08$...` / `$2b$08$...`), eliminating the critical credential incompatibility (`SEC-001`).
+  - Zero-legacy adherence: no dual-algorithm fallbacks or legacy hash migrations.
+  - Invariant adherence: 16-character minimum secret length enforced across API schemas (`minLength: 16`), database functions, and `scripts/provision-device.ts` (generates 32-character base64url secrets).
+  - Explicit initial epoch: `scripts/provision-device.ts` initializes `current_epoch: 1` explicitly upon upserting new devices.
+- **Related Finding**: `SEC-001`, `SEC-002`.
+- **Tests Updated**:
+  - `test/core.test.ts`: Added assertion verifying that generated hashes start with `$2a$08$` or `$2b$08$` and compare successfully.
+- **Verification Result**: `tsc -p tsconfig.json` exit 0, `vitest run` 23/23 tests passed.
