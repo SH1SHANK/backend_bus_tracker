@@ -1,5 +1,22 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
+
+vi.mock('../src/repositories/telemetry.repo.js', () => ({
+  getLastState: vi.fn(async () => null),
+  ingestTelemetry: vi.fn(async () => ({ ok: true, code: 'SUCCESS', stored: true, state_updated: true, events: [] })),
+}));
+
+vi.mock('../src/lib/supabase.js', () => ({
+  supabase: {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          maybeSingle: vi.fn(async () => ({ data: { is_active: true, bus_id: 'b1' }, error: null })),
+        })),
+      })),
+    })),
+  },
+}));
 
 let app: Awaited<ReturnType<typeof buildApp>>;
 
