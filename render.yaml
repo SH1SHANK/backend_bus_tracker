@@ -2,7 +2,7 @@ services:
   - type: web
     name: bus-telemetry-api
     runtime: docker
-    plan: starter        # free tier sleeps after idle -> drops telemetry
+    plan: free
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
