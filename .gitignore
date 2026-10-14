@@ -4,3 +4,4 @@ dist
 .agents/
 skills-lock.json
 supabase/.temp/
+.DS_Store
