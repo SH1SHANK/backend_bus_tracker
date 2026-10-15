@@ -1,3 +1,7 @@
 node_modules
 dist
 .env
+.agents/
+skills-lock.json
+supabase/.temp/
+.DS_Store

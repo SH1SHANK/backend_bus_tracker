@@ -17,9 +17,17 @@ const { data: bus, error: busErr } = await supabase
   .single();
 if (busErr) throw busErr;
 
+// Generate 32-character high-entropy secret (enforces >= 16 character invariant)
 const secret = randomBytes(24).toString('base64url');
 const { error } = await supabase.from('devices').upsert(
-  { device_id: deviceId, bus_id: bus.id, credential_hash: await hashSecret(secret), is_active: true },
+  {
+    device_id: deviceId,
+    bus_id: bus.id,
+    credential_hash: await hashSecret(secret),
+    is_active: true,
+    current_epoch: 1,
+    updated_at: new Date().toISOString(),
+  },
   { onConflict: 'device_id' },
 );
 if (error) throw error;

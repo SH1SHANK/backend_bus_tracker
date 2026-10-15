@@ -3,7 +3,8 @@ import { Type } from '@sinclair/typebox';
 import { config } from '../config.js';
 import { supabase } from '../lib/supabase.js';
 import { hashSecret, verifySecret } from '../lib/password.js';
-import { DeviceId, ErrorResponse } from '../schemas/telemetry.js';
+import { DeviceAuthBody, ResetSessionBody, ResetSessionResponse } from '../schemas/auth.js';
+import { ErrorResponse } from '../schemas/telemetry.js';
 
 const route: FastifyPluginAsyncTypebox = async (app) => {
   // Constant-time-ish path for unknown devices (no user enumeration)
@@ -14,10 +15,7 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
     {
       config: { rateLimit: { max: config.rateLimit.authMax, timeWindow: '1 minute' } },
       schema: {
-        body: Type.Object(
-          { device_id: DeviceId, secret: Type.String({ minLength: 16, maxLength: 128 }) },
-          { additionalProperties: false },
-        ),
+        body: DeviceAuthBody,
         response: {
           200: Type.Object({ token: Type.String(), token_type: Type.Literal('Bearer'), expires_in: Type.Integer() }),
           '4xx': ErrorResponse,
@@ -43,6 +41,48 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         { expiresIn: config.deviceTokenTtlS },
       );
       return { token, token_type: 'Bearer' as const, expires_in: config.deviceTokenTtlS };
+    },
+  );
+
+  app.post(
+    '/auth/reset-session',
+    {
+      config: { rateLimit: { max: config.rateLimit.authMax, timeWindow: '1 minute' } },
+      schema: {
+        body: ResetSessionBody,
+        response: {
+          200: ResetSessionResponse,
+          '4xx': ErrorResponse,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { device_id, secret, session_id, reason } = req.body;
+      const { data, error } = await supabase.rpc('reset_device_sequence', {
+        p_device_id: device_id,
+        p_secret: secret,
+        p_session_id: session_id ?? null,
+        p_reason: reason ?? 'firmware_reboot',
+      });
+      if (error) throw new Error(error.message);
+
+      if (!data || !data.ok) {
+        const code = data?.code || 'UNAUTHORIZED';
+        const msg = data?.error || 'invalid device credentials';
+        req.log.warn({ device_id, code }, 'device sequence reset rejected');
+        return reply.code(401).send({ ok: false, code, message: msg });
+      }
+
+      const resolvedEpoch = Number(data.epoch ?? data.new_epoch);
+      req.log.info({ device_id, epoch: resolvedEpoch, retry: data.idempotent_retry }, 'device sequence reset confirmed');
+      return {
+        ok: true,
+        code: data.code,
+        epoch: resolvedEpoch,
+        device_id: data.device_id,
+        bus_id: data.bus_id,
+        idempotent_retry: data.idempotent_retry ?? false,
+      };
     },
   );
 };

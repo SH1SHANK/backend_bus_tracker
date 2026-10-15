@@ -43,6 +43,22 @@ export default fp(async (app) => {
       return deny(reply, 401, 'unauthorized', 'invalid or expired device token');
     }
     if (req.user.typ !== 'device') return deny(reply, 401, 'unauthorized', 'invalid token type');
+
+    // Dynamic revocation & bus reassignment check:
+    // Ensures a deactivated device cannot continue streaming telemetry with an existing 12-hour token
+    const { data: dev, error } = await supabase
+      .from('devices')
+      .select('is_active, bus_id')
+      .eq('device_id', req.user.sub)
+      .maybeSingle();
+
+    if (error || !dev || !dev.is_active) {
+      return deny(reply, 401, 'unauthorized', 'device is inactive or revoked');
+    }
+
+    if (dev.bus_id && dev.bus_id !== req.user.bus_id) {
+      req.user.bus_id = dev.bus_id;
+    }
   });
 
   // Supabase Auth user JWT (Flutter app). Validated by Supabase itself.

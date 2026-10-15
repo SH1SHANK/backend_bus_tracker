@@ -18,7 +18,7 @@ export async function buildApp() {
       redact: ['req.headers.authorization'],
       transport: config.env === 'development' ? { target: 'pino-pretty' } : undefined,
     },
-    trustProxy: true, // behind Render's proxy: correct client IP
+    trustProxy: config.trustedProxies, // RFC1918 private subnets and loopback
     bodyLimit: 16 * 1024,
     ajv: { customOptions: { removeAdditional: false } }, // reject unknown fields, don't silently strip
   }).withTypeProvider<TypeBoxTypeProvider>();

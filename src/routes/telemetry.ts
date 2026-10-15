@@ -24,14 +24,19 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       const body = req.body;
       const device = req.user;
 
-      const reject = (status: 401 | 403 | 422, code: string, message: string, label = 'rejected') => {
+      const reject = (
+        status: 400 | 401 | 403 | 409 | 422,
+        code: string,
+        message: string,
+        label = 'rejected',
+      ) => {
         telemetryTotal.inc({ result: label, reason: code });
         req.log.warn({ device: device.sub, code }, 'telemetry rejected');
         return reply.code(status).send({ ok: false as const, code, message });
       };
       const ignore = (reason: string) => {
         telemetryTotal.inc({ result: 'ignored', reason });
-        return reply.code(200).send({ ok: true, stored: false, reason });
+        return reply.code(200).send({ ok: true, stored: false, state_updated: false, reason });
       };
 
       if (body.device_id !== device.sub)
@@ -41,12 +46,14 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       const invalid = validateTelemetry(body);
       if (invalid) return reject(422, invalid.code, invalid.message);
 
-      // 5. anomaly detection against last accepted state
-      const anomaly = detectAnomaly(body, await getLastState(device.bus_id));
-      if (anomaly.kind === 'duplicate' || anomaly.kind === 'stale') return ignore(anomaly.kind);
-      if (anomaly.kind === 'gps_jump' || anomaly.kind === 'impossible_speed')
-        return reject(422, anomaly.kind, `implied speed ${Math.round(anomaly.impliedSpeedKmh)} km/h`, 'anomaly');
-      if (anomaly.kind === 'ok' && anomaly.seqReset) req.log.info({ device: device.sub, seq: body.seq }, 'sequence reset (device reboot?)');
+      // 5. anomaly detection (GPS jump checks against last accepted state)
+      const lastState = await getLastState(device.bus_id);
+      if (lastState) {
+        const anomaly = detectAnomaly(body, lastState);
+        if (anomaly.kind === 'gps_jump' || anomaly.kind === 'impossible_speed') {
+          return reject(422, anomaly.kind, `implied speed ${Math.round(anomaly.impliedSpeedKmh)} km/h`, 'anomaly');
+        }
+      }
 
       // 6. processing  7. persist (atomic RPC)
       const processed = processTelemetry(body);
@@ -54,11 +61,57 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       const result = await ingestTelemetry(device.sub, device.bus_id, processed);
       end();
 
-      if (!result.ok) return reject(401, result.reason ?? 'device_inactive', 'device not authorised', 'rejected');
-      if (!result.stored) return ignore(result.reason ?? 'duplicate');
+      if (!result || typeof result !== 'object') {
+        throw new Error('Invalid or empty response from ingest_telemetry_packet');
+      }
 
-      telemetryTotal.inc({ result: 'accepted', reason: processed.status });
-      return { ok: true, stored: true, state_updated: result.state_updated, events: result.events ?? [] };
+      // Handle idempotent duplicate packet from RPC
+      if (result.ok && result.code === 'DUPLICATE_PACKET') {
+        return reply.code(200).send({
+          ok: true,
+          stored: false,
+          state_updated: false,
+          reason: 'duplicate',
+        });
+      }
+
+      if (result.ok) {
+        telemetryTotal.inc({ result: 'accepted', reason: processed.status });
+        return {
+          ok: true,
+          stored: Boolean(result.stored ?? result.pos_inserted ?? true),
+          state_updated: Boolean(result.state_updated ?? false),
+          events: result.events ?? [],
+        };
+      }
+
+      // Rejections from database RPC
+      const code = result.code || 'UNKNOWN_ERROR';
+      const msg = result.error || 'telemetry rejected';
+
+      if (code === 'UNAUTHORIZED_DEVICE' || code === 'INACTIVE_BUS') {
+        return reject(401, code, msg, 'rejected');
+      }
+      if (
+        code === 'STALE_EPOCH_PACKET' ||
+        code === 'UNAUTHORIZED_EPOCH' ||
+        code === 'INVALID_SEQUENCE' ||
+        code === 'SEQUENCE_REUSE_CONFLICT' ||
+        code === 'OUT_OF_ORDER_PACKET'
+      ) {
+        return reject(409, code, msg, 'conflict');
+      }
+      if (
+        code === 'COORDINATES_OUT_OF_BOUNDS' ||
+        code === 'INVALID_SPEED' ||
+        code === 'INVALID_HEADING' ||
+        code === 'INVALID_ACCURACY' ||
+        code === 'IMPLAUSIBLE_TIMESTAMP'
+      ) {
+        return reject(422, code, msg, 'invalid');
+      }
+
+      return reject(400, code, msg, 'rejected');
     },
   );
 };

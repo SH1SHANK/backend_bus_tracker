@@ -26,10 +26,10 @@ export function validateTelemetry(p: TelemetryInput, now = new Date()): Rejectio
   if (p.latitude < b.minLat || p.latitude > b.maxLat || p.longitude < b.minLon || p.longitude > b.maxLon)
     return { code: 'outside_service_area', message: 'position is outside the service area' };
 
-  if (p.accuracy > t.maxAccuracyM)
+  if (p.accuracy != null && p.accuracy > t.maxAccuracyM)
     return { code: 'poor_accuracy', message: `accuracy worse than ${t.maxAccuracyM} m` };
 
-  if (p.speed > t.maxSpeedKmh)
+  if (p.speed != null && p.speed > t.maxSpeedKmh)
     return { code: 'speed_out_of_range', message: `speed above ${t.maxSpeedKmh} km/h` };
 
   return null;
