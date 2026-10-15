@@ -14,26 +14,31 @@ ESP32 → `POST /api/v1/telemetry` → validate → anomaly check → Supabase (
 
 ## Device flow
 ```
-POST /api/v1/auth/device   {"device_id":"NITC-BUS-001","secret":"..."}  → {token, expires_in}
+# Option A: Single-round-trip boot auth + session epoch reset
+POST /api/v1/auth/device
+  {"device_id":"NITC-BUS-001","secret":"...","session_id":"boot-1728901234-a8f9","reason":"cold_boot"}
+  → {token, token_type:"Bearer", expires_in:43200, epoch:2, idempotent_retry:false}
+
+# Option B: Dedicated session epoch reset
+POST /api/v1/auth/reset-session
+  {"device_id":"NITC-BUS-001","secret":"...","session_id":"boot-1728901234-a8f9","reason":"cold_boot"}
+  → {ok:true, code:"SUCCESS", epoch:2, device_id:"NITC-BUS-001", bus_id:"...", idempotent_retry:false}
+
+# Stream live telemetry (or flush offline queue via POST /api/v1/telemetry/batch)
 POST /api/v1/telemetry     Authorization: Bearer <token>
-  {"device_id":"NITC-BUS-001","seq":18421,"timestamp":"2026-10-07T06:40:12Z",
-   "latitude":11.321234,"longitude":75.934567,"speed":18.4,"heading":143.2,"accuracy":4.1}
+  {"device_id":"NITC-BUS-001","seq":1,"epoch":2,"timestamp":"2026-10-14T04:30:00.000Z",
+   "latitude":11.3216,"longitude":75.9345,"speed":12.5,"heading":90,"accuracy":8}
 ```
 | Response | Meaning | Device action |
 |---|---|---|
-| 200 `stored:true` | accepted | drop from buffer |
-| 200 `stored:false` (`duplicate`/`stale`) | already have it / older than state | drop from buffer |
-| 401 | token expired / device disabled | re-auth, retry |
+| 200 `stored:true` | accepted | advance `seq++`, drop from buffer |
+| 200 `stored:false` (`duplicate`) | idempotent retry acknowledged | advance `seq++`, drop from buffer |
+| 401 | token expired / device disabled | re-auth via `/auth/device`, retry |
 | 403 | `device_id` ≠ token | fix firmware |
-| 422 | bad data (`gps_jump`, `poor_accuracy`, …) | drop packet |
+| 409 | `STALE_EPOCH_PACKET` / `OUT_OF_ORDER_PACKET` / `SEQUENCE_REUSE_CONFLICT` | re-sync session epoch or advance `seq` |
+| 422 | bad data (`gps_jump`, `poor_accuracy`, `outside_service_area`) | drop packet, advance `seq++` |
 | 429 / 5xx | backoff | keep in buffer, exponential retry |
 
 ## Flutter
 - Live: subscribe to Supabase Realtime `postgres_changes` on `bus_current_state` (RLS: authenticated read).
-- REST (Supabase user JWT as Bearer): `GET /api/v1/buses`, `/buses/:id`, `/buses/nearby?lat&lon&radius`, `/stops/nearest?lat&lon&limit`.
-
-## Notes
-- Rate limit is per device (30/min default); auth endpoint 10/min per IP.
-- Route deviation uses `routes.path` if set, else a straight line through ordered stops (500 m threshold) — set `path` for curvy routes.
-- Render free tier sleeps; use a paid instance for 5–10 s telemetry.
-- `/metrics` (Prometheus) enabled only when `METRICS_TOKEN` is set.
+- REST (Supabase user JWT as Bearer): `GET /api/v1/buses`, `/buses/:id`, `/buses/nearby?lat&lon&radius`, `/stops/nearest?lat&lon&limit&radius`.

@@ -1,5 +1,6 @@
--- Bus tracking schema: PostgreSQL + PostGIS + Realtime (Supabase)
+-- Bus tracking schema: PostgreSQL + PostGIS + pgcrypto + Realtime (Supabase)
 create extension if not exists postgis with schema extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create or replace function public.set_updated_at() returns trigger
 language plpgsql as $$ begin new.updated_at = now(); return new; end $$;
@@ -53,15 +54,18 @@ create table public.buses (
 
 create table public.devices (
   id uuid primary key default gen_random_uuid(),
-  device_id varchar not null unique,
+  device_id text not null unique,
   bus_id uuid not null references public.buses(id) on delete cascade,
   credential_hash text not null,
   is_active boolean not null default true,
+  current_epoch bigint not null default 1 check (current_epoch >= 1),
+  last_session_id text,
   last_seen timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index devices_bus_idx on public.devices (bus_id);
+create unique index idx_devices_single_active_bus on public.devices (bus_id) where (is_active = true);
 
 create table public.trips (
   id uuid primary key default gen_random_uuid(),
@@ -81,6 +85,9 @@ create table public.bus_positions (
   id bigserial primary key,
   bus_id uuid not null references public.buses(id) on delete cascade,
   trip_id uuid references public.trips(id) on delete set null,
+  device_id text not null,
+  epoch bigint not null default 1 check (epoch >= 1),
+  seq bigint not null check (seq >= 0),
   latitude numeric(9,6) not null,
   longitude numeric(9,6) not null,
   location extensions.geography(Point, 4326) generated always as (
@@ -89,20 +96,24 @@ create table public.bus_positions (
   speed numeric(6,1),
   heading numeric(4,1),
   accuracy numeric(7,1),
-  seq bigint not null,
+  status varchar not null default 'stationary'
+    check (status in ('moving','stationary','delay')),
   recorded_at timestamptz not null,
   received_at timestamptz not null default now(),
-  unique (bus_id, recorded_at)               -- dedupe retried packets
+  created_at timestamptz not null default now(),
+  constraint uq_bus_positions_device_epoch_seq unique (device_id, epoch, seq)
 );
 create index bus_positions_trip_idx on public.bus_positions (trip_id, recorded_at);
+create index bus_positions_bus_recorded_idx on public.bus_positions (bus_id, recorded_at desc);
 create index bus_positions_location_gix on public.bus_positions using gist (location);
 create index bus_positions_recorded_brin on public.bus_positions using brin (recorded_at);
--- Retention (optional): schedule with pg_cron, e.g.
--- select cron.schedule('prune-positions','0 3 * * *',$$delete from public.bus_positions where recorded_at < now() - interval '90 days'$$);
 
 create table public.bus_current_state (
   bus_id uuid primary key references public.buses(id) on delete cascade,
   trip_id uuid references public.trips(id) on delete set null,
+  device_id text,
+  epoch bigint not null default 1 check (epoch >= 1),
+  seq bigint not null default 0 check (seq >= 0),
   latitude numeric(9,6) not null,
   longitude numeric(9,6) not null,
   location extensions.geography(Point, 4326) generated always as (
@@ -111,8 +122,8 @@ create table public.bus_current_state (
   speed numeric(6,1),
   heading numeric(4,1),
   accuracy numeric(7,1),
-  seq bigint not null,
-  status varchar not null default 'stationary',
+  status varchar not null default 'stationary'
+    check (status in ('moving','stationary','delay')),
   recorded_at timestamptz not null,
   last_seen timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -125,8 +136,9 @@ create table public.bus_events (
   trip_id uuid references public.trips(id) on delete set null,
   stop_id uuid references public.stops(id) on delete set null,
   event_type varchar not null
-    check (event_type in ('arrived','departed','route_deviation','trip_started','trip_ended')),
-  occurred_at timestamptz not null,
+    constraint bus_events_event_type_check
+    check (event_type in ('arrived','departed','route_deviation','trip_started','trip_ended','device_sequence_reset')),
+  occurred_at timestamptz not null default now(),
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
@@ -141,8 +153,6 @@ do $$ declare t text; begin
 end $$;
 
 -- ───────── Row Level Security ─────────
--- The API uses the service_role key (bypasses RLS). Clients get read-only access.
--- devices + bus_positions: no policies => unreadable by clients.
 alter table public.stops             enable row level security;
 alter table public.routes            enable row level security;
 alter table public.route_stops       enable row level security;
@@ -155,7 +165,6 @@ alter table public.bus_events        enable row level security;
 
 do $$ declare t text; begin
   foreach t in array array['stops','routes','route_stops','buses','trips','bus_current_state','bus_events'] loop
-    -- swap "authenticated" for "anon, authenticated" to allow logged-out live tracking
     execute format('create policy "read_%1$s" on public.%1$I for select to authenticated using (true)', t);
   end loop;
 end $$;

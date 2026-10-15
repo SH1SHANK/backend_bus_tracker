@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
-import { supabase } from '../lib/supabase.js';
+import { supabase, unwrap } from '../lib/supabase.js';
 
 const uuid = Type.String({ format: 'uuid' });
 
@@ -24,9 +24,22 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
           return reply.code(422).send({ ok: false, code: 'unknown_reference', message: 'bus_id or route_id not found' });
         throw new Error(error.message);
       }
-      await supabase.from('bus_events').insert({
-        bus_id, trip_id: data.id, event_type: 'trip_started', occurred_at: data.started_at,
-      });
+
+      const [evRes, stateRes] = await Promise.all([
+        supabase.from('bus_events').insert({
+          bus_id,
+          trip_id: data.id,
+          event_type: 'trip_started',
+          occurred_at: data.started_at,
+        }),
+        supabase
+          .from('bus_current_state')
+          .update({ trip_id: data.id, updated_at: new Date().toISOString() })
+          .eq('bus_id', bus_id),
+      ]);
+      unwrap(evRes);
+      unwrap(stateRes);
+
       return reply.code(201).send(data);
     },
   );
@@ -44,12 +57,22 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         .maybeSingle();
       if (error) throw new Error(error.message);
       if (!data) return reply.code(404).send({ ok: false, code: 'not_found', message: 'no active trip with that id' });
-      await Promise.all([
+
+      const [evRes, stateRes] = await Promise.all([
         supabase.from('bus_events').insert({
-          bus_id: data.bus_id, trip_id: data.id, event_type: 'trip_ended', occurred_at: data.ended_at,
+          bus_id: data.bus_id,
+          trip_id: data.id,
+          event_type: 'trip_ended',
+          occurred_at: data.ended_at,
         }),
-        supabase.from('bus_current_state').update({ trip_id: null, updated_at: new Date().toISOString() }).eq('bus_id', data.bus_id),
+        supabase
+          .from('bus_current_state')
+          .update({ trip_id: null, updated_at: new Date().toISOString() })
+          .eq('bus_id', data.bus_id),
       ]);
+      unwrap(evRes);
+      unwrap(stateRes);
+
       return data;
     },
   );

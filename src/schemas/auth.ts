@@ -5,10 +5,21 @@ export const DeviceAuthBody = Type.Object(
   {
     device_id: DeviceId,
     secret: Type.String({ minLength: 16, maxLength: 128 }),
+    // Optional session_id allows single-round-trip boot authentication + epoch negotiation
+    session_id: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    reason: Type.Optional(Type.String({ maxLength: 100 })),
   },
   { additionalProperties: false },
 );
 export type DeviceAuthInput = Static<typeof DeviceAuthBody>;
+
+export const DeviceAuthResponse = Type.Object({
+  token: Type.String(),
+  token_type: Type.Literal('Bearer'),
+  expires_in: Type.Integer(),
+  epoch: Type.Optional(Type.Integer()),
+  idempotent_retry: Type.Optional(Type.Boolean()),
+});
 
 export const ResetSessionBody = Type.Object(
   {

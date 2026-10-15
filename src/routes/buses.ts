@@ -6,6 +6,8 @@ import { supabase } from '../lib/supabase.js';
 const isOnline = (lastSeen?: string | null) =>
   !!lastSeen && Date.now() - Date.parse(lastSeen) < config.telemetry.onlineWindowS * 1000;
 
+const normalizeState = (raw: any) => (Array.isArray(raw) ? (raw[0] ?? null) : (raw ?? null));
+
 const lat = Type.Number({ minimum: -90, maximum: 90 });
 const lon = Type.Number({ minimum: -180, maximum: 180 });
 
@@ -19,10 +21,14 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       .select('id, bus_number, display_name, bus_current_state(*)')
       .eq('is_active', true);
     if (error) throw new Error(error.message);
-    return (data ?? []).map((b: any) => ({
-      ...b,
-      is_online: isOnline(b.bus_current_state?.last_seen),
-    }));
+    return (data ?? []).map((b: any) => {
+      const state = normalizeState(b.bus_current_state);
+      return {
+        ...b,
+        bus_current_state: state,
+        is_online: isOnline(state?.last_seen),
+      };
+    });
   });
 
   // Spatial: buses within radius of a point
@@ -72,7 +78,13 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         .eq('status', 'active')
         .maybeSingle();
 
-      return { ...bus, is_online: isOnline((bus as any).bus_current_state?.last_seen), active_trip: trip ?? null };
+      const state = normalizeState((bus as any).bus_current_state);
+      return {
+        ...bus,
+        bus_current_state: state,
+        is_online: isOnline(state?.last_seen),
+        active_trip: trip ?? null,
+      };
     },
   );
 
@@ -82,15 +94,20 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
     {
       ...auth,
       schema: {
-        querystring: Type.Object({ lat, lon, limit: Type.Integer({ minimum: 1, maximum: 10, default: 3 }) }),
+        querystring: Type.Object({
+          lat,
+          lon,
+          limit: Type.Integer({ minimum: 1, maximum: 10, default: 3 }),
+          radius: Type.Number({ minimum: 100, maximum: 50_000, default: 5000 }),
+        }),
       },
     },
     async (req) => {
-      const { lat, lon, limit } = req.query;
+      const { lat, lon, limit, radius } = req.query;
       const { data, error } = await supabase.rpc('get_nearby_stops', {
         p_latitude: lat,
         p_longitude: lon,
-        p_radius_meters: 1000,
+        p_radius_meters: radius,
         p_limit: limit,
       });
       if (error) throw new Error(error.message);

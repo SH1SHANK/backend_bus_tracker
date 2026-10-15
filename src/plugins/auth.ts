@@ -15,6 +15,7 @@ type Hook = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 declare module 'fastify' {
   interface FastifyInstance {
     authenticateDevice: Hook;
+    verifyDeviceActive: Hook;
     authenticateUser: Hook;
     requireRole: (...roles: string[]) => Hook;
   }
@@ -35,7 +36,7 @@ export default fp(async (app) => {
 
   app.decorateRequest('appUser', null);
 
-  // Device (ESP32) JWT issued by POST /auth/device
+  // Step 1 (onRequest): CPU-only JWT verification so req.user.sub is available for preValidation rate-limiting
   app.decorate('authenticateDevice', async (req, reply) => {
     try {
       await req.jwtVerify();
@@ -43,9 +44,10 @@ export default fp(async (app) => {
       return deny(reply, 401, 'unauthorized', 'invalid or expired device token');
     }
     if (req.user.typ !== 'device') return deny(reply, 401, 'unauthorized', 'invalid token type');
+  });
 
-    // Dynamic revocation & bus reassignment check:
-    // Ensures a deactivated device cannot continue streaming telemetry with an existing 12-hour token
+  // Step 2 (preHandler): Runs AFTER rate-limiting and JSON schema validation so invalid/429 requests never hit Supabase
+  app.decorate('verifyDeviceActive', async (req, reply) => {
     const { data: dev, error } = await supabase
       .from('devices')
       .select('is_active, bus_id')

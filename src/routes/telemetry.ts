@@ -2,18 +2,25 @@ import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { config } from '../config.js';
 import { ingestLatency, telemetryTotal } from '../lib/metrics.js';
 import { getLastState, ingestTelemetry } from '../repositories/telemetry.repo.js';
-import { ErrorResponse, TelemetryBody, TelemetryResponse } from '../schemas/telemetry.js';
+import {
+  ErrorResponse,
+  TelemetryBatchBody,
+  TelemetryBatchResponse,
+  TelemetryBody,
+  TelemetryResponse,
+} from '../schemas/telemetry.js';
 import { detectAnomaly } from '../services/anomaly.js';
 import { processTelemetry } from '../services/processing.js';
 import { validateTelemetry } from '../services/validation.js';
 
 const route: FastifyPluginAsyncTypebox = async (app) => {
-  // Pipeline: 1 JWT auth (onRequest) → 2 rate limit (preValidation)
-  //  → 3 JSON schema → 4 validation → 5 anomaly → 6 processing → 7 insert
+  // Pipeline: 1 JWT signature verify (onRequest) → 2 rate limit (preValidation)
+  //  → 3 JSON schema → 4 active device DB check (preHandler) → 5 validation → 6 anomaly → 7 persist
   app.post(
     '/telemetry',
     {
       onRequest: [app.authenticateDevice],
+      preHandler: [app.verifyDeviceActive],
       config: { rateLimit: { max: config.rateLimit.telemetryMax, timeWindow: '1 minute' } },
       schema: {
         body: TelemetryBody,
@@ -34,19 +41,15 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         req.log.warn({ device: device.sub, code }, 'telemetry rejected');
         return reply.code(status).send({ ok: false as const, code, message });
       };
-      const ignore = (reason: string) => {
-        telemetryTotal.inc({ result: 'ignored', reason });
-        return reply.code(200).send({ ok: true, stored: false, state_updated: false, reason });
-      };
 
       if (body.device_id !== device.sub)
         return reject(403, 'device_mismatch', 'device_id does not match token');
 
-      // 4. validation
+      // Stateless validation
       const invalid = validateTelemetry(body);
       if (invalid) return reject(422, invalid.code, invalid.message);
 
-      // 5. anomaly detection (GPS jump checks against last accepted state)
+      // Anomaly detection (GPS jump checks against last accepted state)
       const lastState = await getLastState(device.bus_id);
       if (lastState) {
         const anomaly = detectAnomaly(body, lastState);
@@ -55,7 +58,7 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
         }
       }
 
-      // 6. processing  7. persist (atomic RPC)
+      // Normalise & persist via atomic RPC
       const processed = processTelemetry(body);
       const end = ingestLatency.startTimer();
       const result = await ingestTelemetry(device.sub, device.bus_id, processed);
@@ -67,6 +70,7 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
 
       // Handle idempotent duplicate packet from RPC
       if (result.ok && result.code === 'DUPLICATE_PACKET') {
+        telemetryTotal.inc({ result: 'ignored', reason: 'duplicate' });
         return reply.code(200).send({
           ok: true,
           stored: false,
@@ -112,6 +116,80 @@ const route: FastifyPluginAsyncTypebox = async (app) => {
       }
 
       return reject(400, code, msg, 'rejected');
+    },
+  );
+
+  // Batch ingestion endpoint for flushing offline ESP32 buffer after cellular dead zones
+  app.post(
+    '/telemetry/batch',
+    {
+      onRequest: [app.authenticateDevice],
+      preHandler: [app.verifyDeviceActive],
+      config: { rateLimit: { max: config.rateLimit.telemetryMax, timeWindow: '1 minute' } },
+      schema: {
+        body: TelemetryBatchBody,
+        response: { 200: TelemetryBatchResponse, '4xx': ErrorResponse },
+      },
+    },
+    async (req, reply) => {
+      const { device_id, packets } = req.body;
+      const device = req.user;
+
+      if (device_id !== device.sub) {
+        return reply.code(403).send({
+          ok: false,
+          code: 'device_mismatch',
+          message: 'device_id does not match token',
+        });
+      }
+
+      let accepted = 0;
+      let duplicates = 0;
+      let rejected = 0;
+      const results: Array<{ seq: number; epoch: number; ok: boolean; stored: boolean; code: string }> = [];
+
+      // Sort packets by (epoch, seq) ascending so buffered fixes replay in monotonic order
+      const ordered = [...packets].sort((a, b) => (a.epoch !== b.epoch ? a.epoch - b.epoch : a.seq - b.seq));
+
+      for (const pkt of ordered) {
+        if (pkt.device_id !== device.sub) {
+          rejected++;
+          results.push({ seq: pkt.seq, epoch: pkt.epoch, ok: false, stored: false, code: 'device_mismatch' });
+          continue;
+        }
+        const invalid = validateTelemetry(pkt);
+        if (invalid) {
+          rejected++;
+          results.push({ seq: pkt.seq, epoch: pkt.epoch, ok: false, stored: false, code: invalid.code });
+          continue;
+        }
+        const processed = processTelemetry(pkt);
+        const res = await ingestTelemetry(device.sub, device.bus_id, processed);
+        if (res?.ok && res.code === 'DUPLICATE_PACKET') {
+          duplicates++;
+          results.push({ seq: pkt.seq, epoch: pkt.epoch, ok: true, stored: false, code: 'DUPLICATE_PACKET' });
+        } else if (res?.ok) {
+          accepted++;
+          results.push({ seq: pkt.seq, epoch: pkt.epoch, ok: true, stored: true, code: 'SUCCESS' });
+        } else {
+          rejected++;
+          results.push({
+            seq: pkt.seq,
+            epoch: pkt.epoch,
+            ok: false,
+            stored: false,
+            code: res?.code || 'UNKNOWN_ERROR',
+          });
+        }
+      }
+
+      return {
+        ok: rejected === 0,
+        accepted,
+        duplicates,
+        rejected,
+        results,
+      };
     },
   );
 };
