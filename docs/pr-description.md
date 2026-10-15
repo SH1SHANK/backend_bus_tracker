@@ -171,3 +171,5 @@ In `test/security.test.ts`, Fastify's proxy trust is verified against IP-spoofin
 - [x] Unresolved operational limitations (sequential trip completion, Render ingress topology, live WebSocket delivery) honestly documented.
 - [x] Production build and test suites pass with zero errors.
 - [x] No production mutations, DDL, or data changes executed.
+
+| **Phase 8** | `HEAD` | `feat: add telemetry simulator CLI, anomaly guard, and architecture docs` | Fixed post-reboot anomaly check in `src/services/anomaly.ts`, added standalone Node/tsx CLI simulator (`scripts/simulate-telemetry.ts`), and published canonical 18-part architecture documentation suite. |

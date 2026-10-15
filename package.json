@@ -13,7 +13,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "provision-device": "tsx scripts/provision-device.ts"
+    "provision-device": "tsx scripts/provision-device.ts",
+    "simulate": "tsx scripts/simulate-telemetry.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

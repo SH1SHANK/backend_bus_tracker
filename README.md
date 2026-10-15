@@ -39,6 +39,13 @@ POST /api/v1/telemetry     Authorization: Bearer <token>
 | 422 | bad data (`gps_jump`, `poor_accuracy`, `outside_service_area`) | drop packet, advance `seq++` |
 | 429 / 5xx | backoff | keep in buffer, exponential retry |
 
-## Flutter
-- Live: subscribe to Supabase Realtime `postgres_changes` on `bus_current_state` (RLS: authenticated read).
-- REST (Supabase user JWT as Bearer): `GET /api/v1/buses`, `/buses/:id`, `/buses/nearby?lat&lon&radius`, `/stops/nearest?lat&lon&limit&radius`.
+## System Architecture & Client Separation
+
+The Fastify backend operates as a dedicated **hardware telemetry gateway, session coordinator, and administrative control plane**. 
+
+- **Physical Trackers:** Transmit GPS fixes exclusively to Fastify (`/api/v1/auth/reset-session`, `/api/v1/telemetry`, `/api/v1/telemetry/batch`).
+- **Flutter Mobile App:** Connects directly to Supabase PostgREST and RPCs using the public `anon` key (`get_active_bus_positions_v2`). The mobile client does not call Fastify directly.
+- **Authoritative Database:** Fastify uses the privileged `service_role` key to invoke PostgreSQL stored procedures (`ingest_telemetry_packet`, `reset_device_sequence`).
+
+For the complete plain-language explanation and canonical technical specifications, refer to [Tracklet Architecture Documentation](docs/README.md).
+
