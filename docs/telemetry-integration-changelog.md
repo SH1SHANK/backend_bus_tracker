@@ -252,3 +252,31 @@ Executed against isolated local Supabase PostgreSQL (`supabase_db_NITC_BUS_TRACK
      - Edge Function E2E Suite: **ALL 9 STEPS PASSED** (`"status": "ALL_TESTS_PASSED"`).
      - Live Cloud Telemetry Gateway & Supabase Database verified end-to-end with zero errors.
 
+
+---
+
+## Phase 8: Anomaly Check Reboot Guard, Standalone Telemetry Simulator CLI & Canonical Architecture Suite
+- **Date**: 2026-10-15
+- **Branch**: `fix/reboot-anomaly-and-telemetry-simulator`
+- **Targets**:
+  - Backend Service: `src/services/anomaly.ts`, `package.json`
+  - Developer Tools: `scripts/simulate-telemetry.ts`
+  - Documentation: `README.md`, `docs/architecture/*`
+- **Key Milestones Achieved**:
+  1. **Post-Reboot / New Session Anomaly Check Guard (`src/services/anomaly.ts`)**:
+     - Resolved an edge-case bug where the first telemetry packet (`seq = 1`) emitted immediately following a cold boot or reboot session reset (`POST /api/v1/auth/reset-session`) was rejected with HTTP 422 `impossible_speed`.
+     - When a device reboots, `bus_current_state.seq` is reset to 0, or `epoch` is incremented. However, `bus_current_state.latitude` and `longitude` preserved the pre-reboot position while `recorded_at` was set to the reset timestamp (milliseconds before the first fix).
+     - Because $dt$ was under 1 second and the hardware had moved or was at waypoint 0, the implied speed between the old session's coordinate and the new fix was falsely flagged as $> 500\text{ km/h}$.
+     - Added an explicit guard: when `!sameEpoch || last.seq === 0`, implied speed comparison against the previous session's coordinate is bypassed (`{ kind: 'ok', seqReset: true }`).
+  2. **Standalone Developer CLI Telemetry Simulator (`scripts/simulate-telemetry.ts`)**:
+     - Added a self-contained, pure-fetch CLI telemetry simulator runnable via `npm run simulate` or `npx tsx scripts/simulate-telemetry.ts`.
+     - Supports Route R1 (57 points) and Route R2 (55 points), configurable nominal speeds, point counts, and interval spacing.
+     - Implements offline dead-zone recovery testing via `POST /api/v1/telemetry/batch` (`mode: 'batch'`).
+     - Added realistic fault injection modes: `reboot`, `gps_drift`, `duplicate`, `conflict`, `stale_sequence`, `stale_epoch`, `future_epoch`, `excessive_speed`, `out_of_bounds`, `stale_timestamp`, and station `dwell`.
+  3. **Canonical Architecture Documentation Suite (`docs/architecture/`)**:
+     - Complete 18-part technical architecture reference covering hardware specifications, telemetry ingestion protocols, Fastify endpoints, PostgreSQL schema, PostGIS RPCs, security models, Realtime vs. polling tradeoffs, and sequence diagrams.
+  4. **Plain-Language Root README**:
+     - Updated root `README.md` with an intuitive, jargon-free overview of the bus tracking system from GPS ping to rider map rendering.
+- **Verification Result**:
+  - Deno & TypeScript syntax checks: 0 compiler errors.
+  - Integration with Fastify endpoints verified.

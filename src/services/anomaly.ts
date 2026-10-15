@@ -32,14 +32,22 @@ export function detectAnomaly(p: TelemetryInput, last: LastState | null): Anomal
   const sameEpoch = last.epoch == null || p.epoch === last.epoch;
 
   if (sameEpoch && ts === lastTs && p.seq === last.seq) return { kind: 'duplicate' };
-  if (ts <= lastTs) return { kind: 'stale' };
+  if (sameEpoch && ts <= lastTs) return { kind: 'stale' };
+
+  // On session reset (epoch bump or last.seq === 0), tracker rebooted or reconnected.
+  // Implied speed against the prior session's state is invalid and should not trigger false positives.
+  if (!sameEpoch || last.seq === 0) {
+    return { kind: 'ok', seqReset: true };
+  }
 
   const dt = (ts - lastTs) / 1000;
+  if (dt <= 0) return { kind: 'stale' };
+
   const distanceM = haversineM(last.latitude, last.longitude, p.latitude, p.longitude);
   const impliedSpeedKmh = (distanceM / dt) * 3.6;
 
   if (distanceM >= t.minJumpCheckDistM && impliedSpeedKmh > t.maxSpeedKmh * t.impliedSpeedSlack) {
     return { kind: distanceM >= t.gpsJumpDistM ? 'gps_jump' : 'impossible_speed', impliedSpeedKmh, distanceM };
   }
-  return { kind: 'ok', seqReset: !sameEpoch || p.seq <= last.seq };
+  return { kind: 'ok', seqReset: p.seq <= last.seq };
 }
